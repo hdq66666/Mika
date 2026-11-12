@@ -51,6 +51,8 @@ data class SpanDigest(
     val leftOut: Int = 0,
     /** 这一份的一句概述(模型和句子一起给的,见 [DayDigest.brief]);没有是空的。 */
     val brief: String = "",
+    /** 概述是照着哪些 App 的句子写的(见 [DayDigest.briefApps])。 */
+    val briefApps: List<String> = emptyList(),
     /** 用户删掉了这一周(这个月)的归纳:只是个记号,记着「不要再自动做」。见 [DigestPool.deleteSpan]。 */
     val removed: Boolean = false,
 )
@@ -74,6 +76,12 @@ data class DayDigest(
      * 没有是空的(模型没给、不合格、清掉了)。
      */
     val brief: String = "",
+    /**
+     * 概述是照着哪些 App 的句子写的:发给模型的全部句子出自的 App,不只是存下来的那几句的。清某个 App 时按它认——
+     * 存下的句子上记的 App 不够用:模型写多了、没存下来的那几句里可能说过这个 App,概述跟着提了;分段归纳又只留几天,
+     * 过后没法再从它们查这一天有过哪些 App。没有概述时是空的。
+     */
+    val briefApps: List<String> = emptyList(),
     /** 用户删掉了这一天的当日归纳:只是个记号(没有句子),记着「不要再自动做」。见 [DigestPool.deleteDay]。 */
     val removed: Boolean = false,
 )
@@ -185,7 +193,7 @@ class DigestPool(data: DigestData = DigestData(), private val newId: () -> Strin
             // 发出去的句子里有请求在途时被删掉的:概述是照着全部写的,可能正说着删掉的那句——哪怕存下的句子一句没少
             // (模型写多了、没存下来的那几句里引过它,概述也跟着提了),也不要
             brief = if (input.all { it.id in alive }) kept(brief, out.size, lines.size) else "",
-        )
+        ).let { d -> if (d.brief.isEmpty()) d else d.copy(briefApps = input.map { it.packageName }.distinct()) }
     }
 
     // ---- 周归纳(第 3 级)、月归纳(第 4 级) ----
@@ -331,7 +339,7 @@ class DigestPool(data: DigestData = DigestData(), private val newId: () -> Strin
             leftOut = (available - input.size).coerceAtLeast(0) + used.sumOf { it.leftOut },
             // 同 [setDay]:发出去的句子里有请求在途时没了的(那一天、那一周的归纳被删了,它的 App 被清了),概述不要
             brief = if (input.all(::there)) kept(brief, out.size, lines.size) else "",
-        )
+        ).let { d -> if (d.brief.isEmpty()) d else d.copy(briefApps = input.flatMap { it.line.apps }.distinct()) }
     }
 
     /**
@@ -445,6 +453,13 @@ class DigestPool(data: DigestData = DigestData(), private val newId: () -> Strin
         val b = dropLines(fromDays = true) { line -> !line.apps.all(keep) }
         var c = false
         for (day in touched) if (clearBriefs(day)) c = true
+        // 分段归纳已经到期删掉了的那些天查不到了:按概述自己记的来源认。没记来源的概述(加这一项之前存下的)
+        // 说不清照着谁写的,清 App 时一并清掉
+        fun stale(brief: String, apps: List<String>) = brief.isNotEmpty() && (apps.isEmpty() || !apps.all(keep))
+        for ((k, d) in days.entries.toList()) if (stale(d.brief, d.briefApps)) { days[k] = d.copy(brief = "", briefApps = emptyList()); c = true }
+        for (m in listOf(weeks, months)) for ((k, d) in m.entries.toList()) {
+            if (stale(d.brief, d.briefApps)) { m[k] = d.copy(brief = "", briefApps = emptyList()); c = true }
+        }
         return a || b || c
     }
 

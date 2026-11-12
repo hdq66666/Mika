@@ -329,6 +329,38 @@ class DigestPoolTest {
             assertEquals(listOf("只写了第二天"), p.span(SpanKind.Week, week)!!.lines.map { it.text })
             assertEquals("", p.span(SpanKind.Week, week)!!.brief)
         }
+        // 分段归纳到期之后再清 App:那几天有过哪些 App 已经查不到了,存下的句子也没引过它(模型写多了的那几句引过)。
+        // 概述自己记着是照着哪些 App 的句子写的,照样清;别的 App 不受影响
+        seeded().let { p ->
+            p.setDay(20_000, p.dayInput(20_000), listOf(NoteSignal(listOf(0), "只写了聊天的")), t0, partial = false, brief = "聊天和邮件")
+            p.setDay(20_001, p.dayInput(20_001), listOf(NoteSignal(listOf(0), "第二天的")), t0 + day, partial = false, brief = "第二天")
+            assertEquals(listOf("com.chat", "com.mail"), p.day(20_000)!!.briefApps)
+            assertTrue(p.expire(20_000 + LearnTuning.NOTES_KEEP_DAYS + 2))
+            assertTrue(p.all().isEmpty())
+            assertFalse("和这几份都无关的 App:什么都不动", p.removePackages { it != "com.other" })
+            assertTrue(p.removePackages { it != "com.mail" })
+            assertEquals(listOf("只写了聊天的"), p.day(20_000)!!.lines.map { it.text })
+            assertEquals("", p.day(20_000)!!.brief)
+            assertEquals("第二天", p.day(20_001)!!.brief)
+        }
+        // 周归纳的概述也记着来源
+        seeded().let { p ->
+            p.setDay(20_000, p.dayInput(20_000), listOf(NoteSignal(listOf(0), "聊天的"), NoteSignal(listOf(1), "邮件的")), t0, partial = false)
+            val week = DigestPool.weekOf(20_000)
+            val sent = p.spanInput(SpanKind.Week, week, true)
+            val chat = sent.indexOfFirst { it.line.apps == listOf("com.chat") }
+            p.setSpan(SpanKind.Week, week, sent, listOf(NoteSignal(listOf(chat), "只写了聊天的")), t0 + day, partial = true, brief = "聊天和邮件")
+            // 没有哪句还存着的周归纳句子引过邮件;当日归纳里的那句会被去掉,周归纳的概述按来源清
+            assertTrue(p.removePackages { it != "com.mail" })
+            assertEquals(listOf("只写了聊天的"), p.span(SpanKind.Week, week)!!.lines.map { it.text })
+            assertEquals("", p.span(SpanKind.Week, week)!!.brief)
+        }
+        // 没记来源的概述(加这一项之前存下的):清任何一个 App 时一并清掉
+        pool(DigestData(days = listOf(DayDigest(20_000, t0, listOf(DigestLine("聊天的", apps = listOf("com.chat"))), brief = "以前存下的概述")))).let { p ->
+            assertTrue(p.removePackages { it != "com.mail" })
+            assertEquals("", p.day(20_000)!!.brief)
+            assertEquals(1, p.day(20_000)!!.lines.size)
+        }
         // 分段归纳到期只是划掉句子上记的依据,句子还在:概述留着
         fresh().let { p ->
             assertTrue(p.expire(20_000 + LearnTuning.NOTES_KEEP_DAYS + 1))
