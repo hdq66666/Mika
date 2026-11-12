@@ -184,6 +184,9 @@ class NoticeJournal(
     /** 某个 App 不再归纳(取消勾选、被禁用、不从它归纳、清掉它的)时,它的记录一并去掉。有去掉的返回 true。 */
     fun removePackages(keep: (String) -> Boolean): Boolean = entries.removeAll { !keep(it.packageName) }
 
+    /** 现在留着哪些 App 的通知原文(只有包名,不带内容)。 */
+    fun packages(): Set<String> = entries.mapTo(LinkedHashSet()) { it.packageName }
+
     /** 全部清掉,从现在重新开始记。 */
     fun clear() {
         entries.clear()

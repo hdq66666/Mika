@@ -273,8 +273,8 @@ fun ProactiveLearnScreen(onBack: () -> Unit) {
         KnowPage.Topics -> TopicsPage(ui, topics, level, state.status == LearnStatus.StoreUnavailable)
         KnowPage.Contacts -> ContactsPage(ui, contacts, topics) { editRelation = it }
         KnowPage.Clear -> ClearPage(
-            ui, remember(topics, contacts, notes, days, weeks, months, labels) {
-                clearableApps(topics, contacts, notes, days, weeks + months).sortedBy { label(it).lowercase() }
+            ui, remember(topics, contacts, notes, days, weeks, months, state.journalApps, labels) {
+                clearableApps(topics, contacts, notes, days, weeks + months, state.journalApps).sortedBy { label(it).lowercase() }
             },
             topicsBlocked, contactsView.blocked, { confirmClearAll = true }, { confirmClearApp = it },
         )
@@ -871,19 +871,24 @@ private fun kindLabel(k: TopicKind): Int = when (k) {
     TopicKind.Routine -> R.string.proactive_learn_kind_routine
 }
 
-/** 「清空来自它的」列哪些 App:话题上有它的证据、有它的联系人,或分段归纳、当日(周、月)归纳里有依据过它的句子。 */
+/**
+ * 「清空来自它的」列哪些 App:话题上有它的证据、有它的联系人,分段归纳、当日(周、月)归纳里有依据过它的句子,
+ * 或者还留着它的通知原文([raw])——刚来了几条通知、还没归纳出任何东西的 App 只有原文,不列它就只能全部清空。
+ */
 internal fun clearableApps(
     topics: List<com.wangzan101.mika.core.proactive.ObservedTopic>,
     contacts: List<com.wangzan101.mika.core.proactive.ObservedContact>,
     notes: List<com.wangzan101.mika.core.proactive.DigestNote>,
     days: List<com.wangzan101.mika.core.proactive.DayDigest>,
     spans: List<com.wangzan101.mika.core.proactive.SpanDigest>,
+    raw: Set<String> = emptySet(),
 ): Set<String> = LinkedHashSet<String>().apply {
     topics.forEach { addAll(it.evidence.keys) }
     contacts.forEach { add(it.packageName) }
     notes.forEach { add(it.packageName) }
     days.forEach { d -> d.lines.forEach { addAll(it.apps) } }
     spans.forEach { s -> s.lines.forEach { addAll(it.apps) } }
+    addAll(raw)
 }
 
 /**

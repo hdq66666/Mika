@@ -25,6 +25,8 @@ class ClearableAppsTest {
         )
         assertEquals(setOf("com.day", "com.note"), clearableApps(emptyList(), emptyList(), emptyList(), listOf(day), emptyList()))
         assertEquals(emptySet<String>(), clearableApps(emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+        // 只留着通知原文、还没归纳出任何东西的 App 也列出来
+        assertEquals(setOf("com.day", "com.note", "com.raw"), clearableApps(emptyList(), emptyList(), emptyList(), listOf(day), emptyList(), setOf("com.raw", "com.note")))
     }
 
     // 「归纳到现在」做不了的几种情况都有一句话可说;做得了时没有

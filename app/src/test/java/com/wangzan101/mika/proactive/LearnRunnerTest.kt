@@ -1143,6 +1143,23 @@ class LearnRunnerTest {
         assertTrue(e2.purges.journalPurges.isEmpty())
     }
 
+    // 页面要知道还留着哪些 App 的通知原文(只有包名):只有原文、还没归纳出东西的 App 也得能单独清掉
+    @Test fun stateListsTheAppsThatStillHaveRawText() = runTest {
+        val e = Env(this)
+        e.digest = true
+        e.post(pkg = "com.a", count = 2)
+        e.post(pkg = "com.b", count = 1)
+        assertEquals(setOf("com.a", "com.b"), e.runner.state.value.journalApps)
+        e.runner.clearApp("com.a")
+        assertEquals(setOf("com.b"), e.runner.state.value.journalApps)
+        // 换一个进程、没在看守:打开内容页时把原文读出来,页面上照样列得出
+        lockAndUnlock(e)
+        val again = newProcess(e)
+        assertEquals(emptySet<String>(), again.state.value.journalApps)
+        again.open()
+        assertEquals(setOf("com.b"), again.state.value.journalApps)
+    }
+
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)
     @Test fun journalFollowsEveryPurgePath() = runTest {
         fun Env.seed(): Env {

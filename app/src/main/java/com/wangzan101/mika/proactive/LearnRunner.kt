@@ -110,6 +110,8 @@ data class LearnState(
     val feed: Map<String, LearnFeed> = emptyMap(),
     /** 通知日志里现在留着几段通知原文(「当日消息归纳」关着时是 0)。 */
     val journal: Int = 0,
+    /** 留着的通知原文出自哪些 App(只有包名):还没归纳出任何东西的 App 也要能单独清掉,见「清空来自它的」。 */
+    val journalApps: Set<String> = emptySet(),
 )
 
 /** 页面上点开一句分段归纳、看它是照着哪些通知写的([LearnRunner.rawFor])。 */
@@ -463,6 +465,8 @@ internal class LearnRunner(
         loadedContacts()?.let { c -> if (c.maintain(clock(), p?.all()?.map { it.id }?.toSet())) saveContacts(c) }
         // 到期的归纳不管开关开没开都删(关着时东西还留着,期限照算)
         freshDigest()
+        // 通知原文也读出来:页面上「清空来自它的」要列出只有原文、还没归纳出东西的 App(没在看守时它还没读过)
+        if (on() && digest()) loadedJournal()
         if (p == null) publish(LearnStatus.StoreUnavailable) else if (host != null) evaluate()
     }
 
@@ -1656,7 +1660,7 @@ internal class LearnRunner(
     private fun publish(s: LearnStatus) {
         status = s
         val summary = buffer.state.value
-        mutable.value = LearnState(s, summary.total, summary.pending, lastDistilledAtMs, HashMap(feed), journal?.size ?: 0)
+        mutable.value = LearnState(s, summary.total, summary.pending, lastDistilledAtMs, HashMap(feed), journal?.size ?: 0, journal?.packages().orEmpty())
     }
 
     companion object {
