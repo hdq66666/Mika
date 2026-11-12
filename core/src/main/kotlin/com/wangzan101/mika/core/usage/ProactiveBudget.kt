@@ -63,8 +63,9 @@ object ProactiveBudget {
     fun allowed(usedToday: Long, limit: Long): Boolean = usedToday < limit
 
     /**
-     * 不能再发时抛 [ModelError.ProactiveBudgetExceeded];每次实际请求前调。
-     * [callsToday] 是今天已经发出的请求数,到 [callLimit] 也停(这时错误里的 [ModelError.ProactiveBudgetExceeded.byCalls] 为真)。
+     * 不能再发时抛 [ModelError.ProactiveBudgetExceeded];每次实际请求前调——一次调用开头调一次,适配器在同一次调用里
+     * 再发请求(兼容重试、刷新令牌后重发)之前也调(见 [metered] 的 beforeRetry)。
+     * [callsToday] 是今天已经发出的请求数(连同这次调用里已经发出、还没记进账本的),到 [callLimit] 也停(这时错误里的 [ModelError.ProactiveBudgetExceeded.byCalls] 为真)。
      * 这是整份的硬上限,各用途共用。
      */
     fun check(usedToday: Long, limit: Long, callsToday: Long = 0) {

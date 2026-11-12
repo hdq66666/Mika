@@ -1134,6 +1134,41 @@ class ProviderStoreTest {
         s.modelFor(ModelRole.Main)!!.complete("s", emptyList(), emptyList())
     }
 
+    /**
+     * 只剩最后一次请求额度时,适配器在同一次调用里要再发一个请求(这里是不认 include 参数的 Responses 服务:400 后去掉参数重发):
+     * 不发,次数停在上限上;已经发出去的那一个照实记账。用的是真的适配器和账本。
+     */
+    @Test fun proactiveRetryInsideOneCallStopsAtTheCallLimit() = runTest {
+        val server = okhttp3.mockwebserver.MockWebServer().also { it.start() }
+        try {
+            val b = Budgets(tmp.newFolder())
+            val s = ProviderStore(
+                tmp.root, AesGcmKeyCipher { key }, usage = b.ledger, dailyUsage = b.ledger::providerTokensToday,
+                proactiveUsage = b.ledger::proactiveTokensToday, proactiveLimit = { b.proactiveLimit },
+                proactiveCalls = b.ledger::proactiveCallsToday,
+            )
+            val listed = ListedModel("r-only", endpoint = ModelEndpoint(ModelProtocol.Responses, server.url("/v1").toString()))
+            val p = s.connect("Go", ProviderConfig.Kind.OpenAiCompat, "https://go.test/v1", "k", listOf(listed))
+            s.use(ModelRole.Main, p.id, "r-only", none)
+            val cap = ProactiveBudget.callLimit(b.proactiveLimit)
+            repeat(cap.toInt() - 1) { b.ledger.record(UsageSource(p.id, "Go", "r-only", UsagePurpose.Proactive), null) }
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(400)
+                .setBody("""{"error":{"param":"include","message":"reasoning.encrypted_content unsupported"}}"""))
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "text/event-stream")
+                .setBody("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"))
+            try {
+                s.proactiveModel()!!.complete("s", emptyList(), emptyList())
+                fail("只剩一次额度,重发的那个请求不该发出去")
+            } catch (e: ModelError.ProactiveBudgetExceeded) {
+                assertTrue(e.byCalls)
+            }
+            assertEquals(1, server.requestCount)
+            assertEquals(cap, b.ledger.proactiveCallsToday())
+        } finally {
+            server.shutdown()
+        }
+    }
+
     /** 判定到八成就自己停(在 TriageRunner 里);直接的主动能力调用照样能用到整份。 */
     @Test fun directProactiveCallsMayUseTheWholeBudgetPastTheTriageShare() = runTest {
         val b = Budgets(tmp.newFolder())

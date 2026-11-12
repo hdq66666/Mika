@@ -627,7 +627,7 @@ class ProviderStore(
      */
     fun proactiveTargeted(call: ProactiveCall, session: ModelSession = ModelSession.fresh()): TargetedModel? =
         proactiveConfig()?.let { (role, cfg) ->
-            TargetedModel(targetOf(cfg), meteredWith(cfg, role, session, UsagePurpose.Proactive, ::checkProactiveBudget, call))
+            TargetedModel(targetOf(cfg), meteredWith(cfg, role, session, UsagePurpose.Proactive, ::checkProactiveBudget, call, ::checkProactiveRetry))
         }
 
     /** 主动能力用的那条配置和它的用途:轻量模型,没有时用主模型。只读一次配置。 */
@@ -644,6 +644,7 @@ class ProviderStore(
     private fun meteredWith(
         cfg: ProviderConfig, role: ModelRole, session: ModelSession, purpose: UsagePurpose, beforeCall: (UsageSource) -> Unit,
         call: ProactiveCall = ProactiveCall.Triage,
+        beforeRetry: (UsageSource, Int) -> Unit = { _, _ -> },
     ): ChatModel {
         val p = provider(cfg.providerId)
         val source = UsageSource(cfg.providerId, p?.name ?: cfg.name, cfg.model, purpose)
@@ -661,7 +662,7 @@ class ProviderStore(
         return modelFactory(configured, apiKey(cfg.id), listed?.endpoint, ClientSetup(
             headers(p?.sessionHeader, session), maxOutputTokens = cap, reasoningEffort = effort,
             thinkingTypes = listed?.thinkingTypes, readTimeoutSeconds = settings?.readTimeoutSeconds,
-        )).metered(source, usage, beforeCall)
+        )).metered(source, usage, beforeRetry = beforeRetry, beforeCall = beforeCall)
     }
 
     /**
@@ -670,6 +671,14 @@ class ProviderStore(
      */
     @Suppress("UNUSED_PARAMETER")
     private fun checkProactiveBudget(source: UsageSource) = ProactiveBudget.check(proactiveUsage(), proactiveLimit(), proactiveCalls())
+
+    /**
+     * 同一次调用里再发一个请求之前:这次调用已经发出的 [started] 个还没记进账本,加上再查。
+     * 不然只剩最后一次额度时,一次调用里的兼容重试会把次数上限顶过去。
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun checkProactiveRetry(source: UsageSource, started: Int) =
+        ProactiveBudget.check(proactiveUsage(), proactiveLimit(), proactiveCalls() + started)
 
     /** 每次实际请求前重查配置和账本；达到预算时不发请求，也不记一笔虚假调用。 */
     private fun checkDailyBudget(source: UsageSource) {
