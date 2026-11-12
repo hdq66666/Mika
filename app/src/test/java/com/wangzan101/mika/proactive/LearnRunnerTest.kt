@@ -1629,6 +1629,35 @@ class LearnRunnerTest {
 
     private fun ObservedTopic.on(vararg apps: Pair<String, List<Long>>) = copy(evidence = apps.toMap())
 
+    // 早该淡忘的话题、联系人(很久没有新归纳、也没开过内容页,还没被整理掉)不带进任务;用户自己定过关系的联系人照带
+    @Test fun observedLeavesOutWhatShouldAlreadyBeForgotten() = runTest {
+        val e = Env(this)
+        val long = start - 70L * LearnTuning.DAY_MS
+        val oldDays = listOf(19_928L, 19_929L, 19_930L)
+        e.store.data = TopicPoolData(topics = listOf(
+            ObservedTopic("old", TopicKind.Interest, "很久以前的话题", long, long).on("com.high" to oldDays),
+            ObservedTopic("new", TopicKind.Interest, "最近的话题", 1L, start).on("com.high" to listOf(20_000L, 19_999L)),
+        ))
+        e.contacts.data = ContactPoolData(contacts = listOf(
+            ObservedContact("c1", "com.high", "很久没联系的人", long, long, days = oldDays),
+            ObservedContact("c2", "com.high", "用户定过的人", long, long, days = oldDays, userRelation = ContactRelation.Friend),
+            ObservedContact("c3", "com.high", "最近的人", 1L, start, days = listOf(19_998L, 19_999L, 20_000L)),
+        ))
+        assertTrue(e.store.data.topics.first().retention(e.now()) < LearnTuning.FORGET_BELOW)
+        assertTrue(e.contacts.data.contacts.first().retention(e.now()) < LearnTuning.FORGET_BELOW)
+        val text = e.runner.observed(LearnLevel.Balanced) { SourceTier.High }!!
+        for (yes in listOf("最近的话题", "最近的人", "用户定过的人")) assertTrue(yes, yes in text)
+        for (no in listOf("很久以前的话题", "很久没联系的人")) assertFalse(no, no in text)
+        // 只是不带:池里的没动,也没有为此存盘(整理照旧在收下新归纳、打开内容页时做)
+        assertEquals(2, e.store.data.topics.size)
+        assertEquals(0, e.store.saves)
+        // 只剩该淡忘的:整段没有
+        e.store.data = TopicPoolData(topics = e.store.data.topics.take(1))
+        e.contacts.data = ContactPoolData(contacts = e.contacts.data.contacts.take(1))
+        val alone = Env(this).also { it.store.data = e.store.data; it.contacts.data = e.contacts.data }
+        assertEquals(null, alone.runner.observed(LearnLevel.Balanced) { SourceTier.High })
+    }
+
     @Test fun observedFollowsTheLevelAndTheSourceTier() = runTest {
         val e = Env(this)
         e.digest = true

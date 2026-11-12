@@ -788,11 +788,15 @@ internal class LearnRunner(
         fun linesOf(day: Long): List<String> =
             digests?.day(day)?.lines.orEmpty().filter { it.apps.isNotEmpty() && it.apps.all(ok) }.map { it.text }
         val allowSensitive = sensitive()
+        // 该淡忘的(留存低于 FORGET_BELOW)不带:它们要等下一次整理才真的从池里去掉,而整理只在收下新归纳、
+        // 打开内容页时做——很久没有新归纳、也没开过页面的话,早该忘掉的话题和联系人还在池里。
+        // 这里只是不带,不在任务这条路上改池、存盘。用户自己定过关系的联系人不淡忘(同 ContactPool.maintain)
         val topics = loadedPool()?.all().orEmpty()
-            .filter { (allowSensitive || !it.sensitive) && ObservedContext.qualifiedTopic(it, level, ok) }
+            .filter { (allowSensitive || !it.sensitive) && it.retention(now) >= LearnTuning.FORGET_BELOW && ObservedContext.qualifiedTopic(it, level, ok) }
             .sortedByDescending { it.score(now) }.take(OBSERVED_TOPICS)
         val people = loadedContacts()?.all().orEmpty()
             .filter { ok(it.packageName) && it.established && (allowSensitive || !it.sensitive) }
+            .filter { it.userSet || it.retention(now) >= LearnTuning.FORGET_BELOW }
             .sortedByDescending { it.score(now) }.take(OBSERVED_PEOPLE)
             .map { ObservedContext.Person(it.name, it.type == ContactType.Group, it.relation, it.userSet) }
         val asOf = digests?.day(today)?.let { java.time.Instant.ofEpochMilli(it.madeAtMs).atZone(zone()).toLocalTime() }
