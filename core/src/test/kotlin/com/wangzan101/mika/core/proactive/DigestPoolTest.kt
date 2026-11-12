@@ -307,6 +307,28 @@ class DigestPoolTest {
             assertEquals(1, p.day(20_000)!!.lines.size)
             assertEquals("", p.day(20_000)!!.brief)
         }
+        // 请求在途时删了一句,回复里存下的句子一句没少(都只引了还在的那句),概述却是照着全部写的:不要
+        seeded().let { p ->
+            val sent = p.dayInput(20_000)
+            assertTrue(p.delete(sent.single { it.packageName == "com.mail" }.id))
+            val chat = sent.indexOfFirst { it.packageName == "com.chat" }
+            p.setDay(20_000, sent, listOf(NoteSignal(listOf(chat), "只写了聊天的")), t0, partial = false, brief = "聊天和邮件")
+            assertEquals(listOf("只写了聊天的"), p.day(20_000)!!.lines.map { it.text })
+            assertEquals("", p.day(20_000)!!.brief)
+        }
+        // 周归纳的请求在途时删了其中一天的当日归纳:同样不要概述(删周归纳时在途的月归纳也一样)
+        seeded().let { p ->
+            p.setDay(20_000, p.dayInput(20_000), listOf(NoteSignal(listOf(0), "第一天的事")), t0, partial = false)
+            p.setDay(20_001, p.dayInput(20_001), listOf(NoteSignal(listOf(0), "第二天的事")), t0 + LearnTuning.DAY_MS, partial = false)
+            val week = DigestPool.weekOf(20_000)
+            val sent = p.spanInput(SpanKind.Week, week, true)
+            assertEquals(2, sent.size)
+            assertTrue(p.deleteDay(20_000))
+            val kept = sent.indexOfFirst { it.line.text == "第二天的事" }
+            p.setSpan(SpanKind.Week, week, sent, listOf(NoteSignal(listOf(kept), "只写了第二天")), t0 + 2 * LearnTuning.DAY_MS, partial = true, brief = "两天的事")
+            assertEquals(listOf("只写了第二天"), p.span(SpanKind.Week, week)!!.lines.map { it.text })
+            assertEquals("", p.span(SpanKind.Week, week)!!.brief)
+        }
         // 分段归纳到期只是划掉句子上记的依据,句子还在:概述留着
         fresh().let { p ->
             assertTrue(p.expire(20_000 + LearnTuning.NOTES_KEEP_DAYS + 1))

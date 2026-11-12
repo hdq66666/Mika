@@ -182,7 +182,9 @@ class DigestPool(data: DigestData = DigestData(), private val newId: () -> Strin
         days[day] = DayDigest(
             day, maxOf(nowMs, input.maxOfOrNull { it.madeAtMs } ?: 0), out, partial, input.size,
             leftOut = (notes.count { it.day == day } - input.size).coerceAtLeast(0),
-            brief = kept(brief, out.size, lines.size),
+            // 发出去的句子里有请求在途时被删掉的:概述是照着全部写的,可能正说着删掉的那句——哪怕存下的句子一句没少
+            // (模型写多了、没存下来的那几句里引过它,概述也跟着提了),也不要
+            brief = if (input.all { it.id in alive }) kept(brief, out.size, lines.size) else "",
         )
     }
 
@@ -327,7 +329,8 @@ class DigestPool(data: DigestData = DigestData(), private val newId: () -> Strin
         store(kind)[start] = SpanDigest(
             start, made, out, partial, input.size,
             leftOut = (available - input.size).coerceAtLeast(0) + used.sumOf { it.leftOut },
-            brief = kept(brief, out.size, lines.size),
+            // 同 [setDay]:发出去的句子里有请求在途时没了的(那一天、那一周的归纳被删了,它的 App 被清了),概述不要
+            brief = if (input.all(::there)) kept(brief, out.size, lines.size) else "",
         )
     }
 
