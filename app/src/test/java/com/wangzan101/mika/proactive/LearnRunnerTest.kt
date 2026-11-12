@@ -131,7 +131,11 @@ class LearnRunnerTest {
             this.data = data; saves++; onSave()
         }
         override fun dropBroken() { brokenCopies = 0 }
-        override fun wipe() { data = TopicPoolData(); brokenCopies = 0; wipes++ }
+        var failWipe = false
+        override fun wipe() {
+            if (failWipe) throw java.io.IOException("could not delete")
+            data = TopicPoolData(); brokenCopies = 0; wipes++
+        }
     }
 
     private class MemJournal : NoticeJournalStore {
@@ -173,7 +177,11 @@ class LearnRunnerTest {
             if (failSave) throw java.io.IOException("disk")
             this.data = data; saves++
         }
-        override fun wipe() { data = DigestData(); wipes++ }
+        var failWipe = false
+        override fun wipe() {
+            if (failWipe) throw java.io.IOException("could not delete")
+            data = DigestData(); wipes++
+        }
         val texts get() = data.notes.map { it.text }
     }
 
@@ -207,7 +215,11 @@ class LearnRunnerTest {
             this.data = data; saves++; onSave()
         }
         override fun dropBroken() { brokenCopies = 0 }
-        override fun wipe() { data = ContactPoolData(); brokenCopies = 0; wipes++ }
+        var failWipe = false
+        override fun wipe() {
+            if (failWipe) throw java.io.IOException("could not delete")
+            data = ContactPoolData(); brokenCopies = 0; wipes++
+        }
     }
 
     private val target = TriageTarget("p1", "Provider", "m1")
@@ -1128,10 +1140,12 @@ class LearnRunnerTest {
         e.journal.failLoad = true
         e.journal.failWipe = true
         e.runner.clearApp("com.a")
-        assertEquals(setOf("com.a"), e.purges.journalPurges)
+        // 读不出来时本来是整份删;删不掉,记着的就是「全清」
+        assertEquals(setOf(":all"), e.purges.journalPurges)
         e.journal.failLoad = false
         e.journal.failWipe = false
-        assertEquals(listOf("com.b"), newProcess(e).notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!.entries.map { it.packageName })
+        assertTrue(newProcess(e).notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!.entries.isEmpty())
+        assertTrue(e.journal.data!!.entries.isEmpty())
         assertTrue(e.purges.journalPurges.isEmpty())
         // 删得掉的时候整份删了,就没有要补做的
         val e2 = Env(this)
@@ -1158,6 +1172,53 @@ class LearnRunnerTest {
         assertEquals(emptySet<String>(), again.state.value.journalApps)
         again.open()
         assertEquals(setOf("com.b"), again.state.value.journalApps)
+    }
+
+    // 清空全部时,有一份既读不出来、文件也删不掉:不能当成清掉了。记一个「全清」,读得出来时照它清空
+    @Test fun clearAllThatCouldNotWipeAFileIsFinishedWhenItLoadsAgain() = runTest {
+        val e = Env(this)
+        e.digest = true
+        e.store.data = TopicPoolData(topics = listOf(ObservedTopic("k1", TopicKind.Interest, "徒步", 1L, start).on("com.a" to listOf(20_000L, 19_999L))))
+        e.contacts.data = ContactPoolData(contacts = listOf(ObservedContact("c1", "com.a", "张三", 1L, start, days = listOf(20_000L))))
+        e.journal.data = NoticeJournalData(sinceMs = e.now() - 2_000, entries = listOf(NoticeEntry("com.a", e.now() - 1_000, "会话", text = "原文")))
+        e.digestStore.data = DigestData(days = listOf(DayDigest(20_000, start, listOf(DigestLine("一句", apps = listOf("com.a"))))))
+        e.store.failLoad = true; e.store.failWipe = true
+        e.contacts.failLoad = true; e.contacts.failWipe = true
+        e.journal.failLoad = true; e.journal.failWipe = true
+        e.digestStore.failLoad = true; e.digestStore.failWipe = true
+        e.runner.clearAll()
+        assertEquals(setOf(":all"), e.purges.topicPurges)
+        assertEquals(setOf(":all"), e.purges.contactPurges)
+        assertEquals(setOf(":all"), e.purges.journalPurges)
+        assertEquals(setOf(":all"), e.purges.digestPurges)
+        // 存储好了,换一个进程:读出来时都清空,并且存上、不再记着
+        e.store.failLoad = false; e.store.failWipe = false
+        e.contacts.failLoad = false; e.contacts.failWipe = false
+        e.journal.failLoad = false; e.journal.failWipe = false
+        e.digestStore.failLoad = false; e.digestStore.failWipe = false
+        val again = newProcess(e)
+        again.open()
+        assertTrue(again.topics.value.isEmpty())
+        assertTrue(again.contactsView.value.contacts.isEmpty())
+        assertTrue(again.digestDays.value.isEmpty())
+        assertEquals(0, again.state.value.journal)
+        assertTrue(e.store.data.topics.isEmpty())
+        assertTrue(e.contacts.data.contacts.isEmpty())
+        assertTrue(e.journal.data!!.entries.isEmpty())
+        assertTrue(e.digestStore.data.days.isEmpty())
+        for (left in listOf(e.purges.topicPurges, e.purges.contactPurges, e.purges.journalPurges, e.purges.digestPurges)) assertTrue(left.isEmpty())
+    }
+
+    // 清空全部正常做完:没有记着的待删(以前记着的也一并划掉)
+    @Test fun clearAllLeavesNoPendingDeletionsWhenItWorked() = runTest {
+        val e = Env(this)
+        e.digest = true
+        e.post(pkg = "com.a", count = 2)
+        e.purges.topicPurges = setOf(":topic:k9")
+        e.purges.digestPurges = setOf("com.gone")
+        e.purges.journalPurges = setOf("com.gone")
+        e.runner.clearAll()
+        for (left in listOf(e.purges.topicPurges, e.purges.contactPurges, e.purges.journalPurges, e.purges.digestPurges)) assertTrue(left.toString(), left.isEmpty())
     }
 
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)

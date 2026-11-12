@@ -493,36 +493,37 @@ internal class LearnRunner(
         stopRequest()
         buffer.clear()
         val p = loadedPool()
+        val topicsCleared: Boolean
         if (p != null) {
             topicsGone(p.all().map { it.id }.toSet())
             p.clear()
             // 清空了却没存上:文件里还是旧的,下次启动又读回来了。那就把文件删掉
-            if (!save(p)) wipe("topics") { store.wipe() }
+            topicsCleared = save(p) || wipe("topics") { store.wipe() }
         } else {
-            wipe("topics") { store.wipe() }
+            topicsCleared = wipe("topics") { store.wipe() }
             pool = TopicPool()
             topicsFlow.value = emptyList()
             topicsBlockedFlow.value = 0
         }
         val c = loadedContacts()
+        val contactsCleared: Boolean
         if (c != null) {
-            if (c.clear() && !saveContacts(c)) wipe("contacts") { contactStore.wipe() }
+            contactsCleared = !c.clear() || saveContacts(c) || wipe("contacts") { contactStore.wipe() }
         } else {
-            wipe("contacts") { contactStore.wipe() }
+            contactsCleared = wipe("contacts") { contactStore.wipe() }
             contactPool = ContactPool()
             contactsFlow.value = ContactsView()
         }
         dropBroken()
-        // 通知原文和当日消息归纳也清掉
+        // 清空了、落了盘的,没有还要补做的删除。既没存上也没删掉的(文件里还是旧的):记一个「全清」,
+        // 内存里已经是空的了,下次存上时划掉;在那之前进程没了的,下次读出来时照它清空(见 purgeTopics、purgeContacts)
+        purges.topicPurges = if (topicsCleared) emptySet() else setOf(MARK_ALL)
+        topicPurgesApplied = purges.topicPurges
+        purges.contactPurges = if (contactsCleared) emptySet() else setOf(MARK_ALL)
+        contactPurgesApplied = purges.contactPurges
+        // 通知原文和当日消息归纳也清掉(删不掉的,它们各自记着,见 dropJournal、dropDigest)
         dropJournal()
         dropDigest()
-        // 都清空了,没有还要补做的删除
-        purges.topicPurges = emptySet()
-        purges.contactPurges = emptySet()
-        purges.digestPurges = emptySet()
-        topicPurgesApplied = emptySet()
-        contactPurgesApplied = emptySet()
-        digestPurgesApplied = emptySet()
         if (host != null) evaluate()
     }
 
@@ -575,8 +576,7 @@ internal class LearnRunner(
             // 开关关着时日志本来就删掉了
             if (on() && digest()) {
                 if (loadedJournal() == null) {
-                    // 整份删;删不掉的话记着这个 App,读得出来时补做
-                    if (what !in purges.journalPurges) purges.journalPurges = purges.journalPurges + what
+                    // 整份删;删不掉的话 dropJournal 记着,读得出来时补做
                     dropJournal()
                 } else {
                     journalRemove(setOf(what))
@@ -602,6 +602,7 @@ internal class LearnRunner(
         if (what.isEmpty()) return
         val gone = HashSet<String>()
         for (w in what) when {
+            w == MARK_ALL -> { gone += p.all().map { it.id }; p.clear() }
             w == PURGE_SENSITIVE -> gone += p.deleteSensitive()
             w.startsWith(MARK_TOPIC) -> w.removePrefix(MARK_TOPIC).let { if (p.delete(it)) gone += it }
             // 别的记号不是话题池的事(也不能当包名去清)
@@ -616,6 +617,7 @@ internal class LearnRunner(
     private fun purgeContacts(c: ContactPool, what: Set<String>) {
         if (what.isEmpty()) return
         for (w in what) when {
+            w == MARK_ALL -> c.clear()
             w == PURGE_SENSITIVE -> c.deleteSensitive()
             w.startsWith(MARK_CONTACT) -> c.delete(w.removePrefix(MARK_CONTACT))
             w.startsWith(":") -> {}
@@ -631,6 +633,7 @@ internal class LearnRunner(
      */
     private fun applyDigestPurges(d: DigestPool, marks: Set<String>): Set<String> = marks.filterTo(HashSet()) { w ->
         when {
+            w == MARK_ALL -> d.clear()
             w.startsWith(MARK_NOTE) -> d.delete(w.removePrefix(MARK_NOTE))
             w.startsWith(MARK_DAY) -> w.removePrefix(MARK_DAY).toLongOrNull()?.let(d::deleteDay) ?: false
             w.startsWith(MARK_WEEK) -> w.removePrefix(MARK_WEEK).toLongOrNull()?.let { d.deleteSpan(SpanKind.Week, it) } ?: false
@@ -693,7 +696,7 @@ internal class LearnRunner(
                 // 记着的还没落盘的按 App 删除(当时读不出来的、删了没存上的):现在补做,存上了才划掉(见 saveJournal)
                 val pending = purges.journalPurges
                 if (pending.isNotEmpty()) {
-                    it.removePackages { p -> p !in pending }
+                    it.removePackages { p -> MARK_ALL !in pending && p !in pending }
                     journalPurgesApplied = journalPurgesApplied + pending
                 }
                 // 读进来时就有过期的:内存里已经去掉了,文件里还在——马上存一次(存里面会刷新页面上的数)
@@ -741,10 +744,13 @@ internal class LearnRunner(
         val had = journal?.size ?: 0
         journal = null
         journalUnsaved = 0
-        // 整份删掉了,没有还要补做的;删不掉的话记着的留着,读得出来时补做
+        // 整份删掉了,没有还要补做的。删不掉的(文件里还是旧的,内存里那份已经丢了,下次一读又回来了):
+        // 记一个「全清」,读得出来时照它清空
+        journalPurgesApplied = emptySet()
         if (wipe("journal") { journalStore.wipe() }) {
             if (purges.journalPurges.isNotEmpty()) purges.journalPurges = emptySet()
-            journalPurgesApplied = emptySet()
+        } else if (purges.journalPurges != setOf(MARK_ALL)) {
+            purges.journalPurges = setOf(MARK_ALL)
         }
         if (had > 0) publish(status)
     }
@@ -977,7 +983,9 @@ internal class LearnRunner(
         if (monthsFlow.value.isNotEmpty()) monthsFlow.value = emptyList()
         if (removedFlow.value.isNotEmpty()) removedFlow.value = emptySet()
         if (removedDaysFlow.value.isNotEmpty()) removedDaysFlow.value = emptySet()
-        wipe("digest") { digestStore.wipe() }
+        // 同 dropJournal:删掉了就没有还要补做的;删不掉的记一个「全清」,读得出来时照它清空
+        digestPurgesApplied = emptySet()
+        purges.digestPurges = if (wipe("digest") { digestStore.wipe() }) emptySet() else setOf(MARK_ALL)
     }
 
     /** 话题没了:事件上、联系人上都不再指着它。 */
@@ -1667,6 +1675,8 @@ internal class LearnRunner(
         /** 记着的删除里表示「敏感类」的那一项;不以冒号开头的都是包名(包名里不会有冒号)。 */
         const val PURGE_SENSITIVE = ":sensitive"
         /** 记着的单删:后面跟着编号(话题、联系人、一句分段归纳)或纪元日(某天、某周、某个月的归纳的起头那天)。 */
+        /** 记着的「全清」:整份没删掉(存不上、文件也删不掉),读得出来时把里面的全清掉。 */
+        private const val MARK_ALL = ":all"
         private const val MARK_TOPIC = ":topic:"
         private const val MARK_CONTACT = ":contact:"
         private const val MARK_NOTE = ":note:"
