@@ -182,6 +182,8 @@ interface LearnPurges {
     var contactPurges: Set<String>
     /** 分段归纳的句子和各级归纳上还没落盘的。 */
     var digestPurges: Set<String>
+    /** 通知原文上还没落盘的:要去掉其全部原文的 App 包名。 */
+    var journalPurges: Set<String>
 }
 
 /**
@@ -249,6 +251,7 @@ internal class LearnRunner(
     private var topicPurgesApplied: Set<String> = emptySet()
     private var contactPurgesApplied: Set<String> = emptySet()
     private var digestPurgesApplied: Set<String> = emptySet()
+    private var journalPurgesApplied: Set<String> = emptySet()
     /**
      * 归纳那份上一次没存上:内存里的比文件里的新。再发分段、当日、周、月归纳的请求之前先把它存上,
      * 还存不上就不发——结果留不住,发了只是白花一次模型调用。
@@ -395,7 +398,7 @@ internal class LearnRunner(
      */
     fun forgetApps(packages: Set<String>) {
         if (packages.isNotEmpty()) {
-            if (on() && digest()) loadedJournal()?.let { if (it.removePackages { p -> p !in packages }) saveJournal() }
+            if (on() && digest()) journalRemove(packages)
             // 正在做的当日(周、月)归纳里可能就有刚去掉的那个 App 的句子:取消,之后按剩下的重做
             digestRemove(packages, stopRequests = true)
         }
@@ -567,8 +570,13 @@ internal class LearnRunner(
             // 「清掉这个 App 的」也清通知原文里它的那些段;日志这时读不出来就整份删(原文不留着等以后补删)。
             // 开关关着时日志本来就删掉了
             if (on() && digest()) {
-                val j = loadedJournal()
-                if (j == null) dropJournal() else if (j.removePackages { it != what }) saveJournal()
+                if (loadedJournal() == null) {
+                    // 整份删;删不掉的话记着这个 App,读得出来时补做
+                    if (what !in purges.journalPurges) purges.journalPurges = purges.journalPurges + what
+                    dropJournal()
+                } else {
+                    journalRemove(setOf(what))
+                }
             }
             // 句子和各级归纳:开关关着时也还留着,所以照样清。这时读不出来(密钥库一时不可用)的,不整份删——
             // 里面有留两年的月归纳;记下来,读得出来时补做(见 loadedDigest)
@@ -658,15 +666,17 @@ internal class LearnRunner(
         wipe("contacts copies") { contactStore.dropBroken() }
     }
 
-    private inline fun wipe(what: String, block: () -> Unit) {
+    /** 删掉了返回 true;删不掉只记一笔,返回 false。 */
+    private inline fun wipe(what: String, block: () -> Unit): Boolean =
         try {
             block()
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log("learn could not delete $what: ${e.javaClass.simpleName}")
+            false
         }
-    }
 
     // ---- 通知日志(通知原文) ----
 
@@ -676,8 +686,14 @@ internal class LearnRunner(
         return try {
             NoticeJournal(journalStore.load(), clock = clock).also {
                 journal = it
+                // 记着的还没落盘的按 App 删除(当时读不出来的、删了没存上的):现在补做,存上了才划掉(见 saveJournal)
+                val pending = purges.journalPurges
+                if (pending.isNotEmpty()) {
+                    it.removePackages { p -> p !in pending }
+                    journalPurgesApplied = journalPurgesApplied + pending
+                }
                 // 读进来时就有过期的:内存里已经去掉了,文件里还在——马上存一次(存里面会刷新页面上的数)
-                if (it.expiredOnLoad) saveJournal() else publish(status)
+                if (it.expiredOnLoad || pending.isNotEmpty()) saveJournal() else publish(status)
             }
         } catch (e: CancellationException) {
             throw e
@@ -700,6 +716,11 @@ internal class LearnRunner(
         try {
             journalStore.save(j.data())
             journalUnsaved = 0
+            // 做过的按 App 删除存上了:不再记着,免得这个 App 以后又被允许时,把那之后新记的也删掉
+            if (journalPurgesApplied.isNotEmpty()) {
+                purges.journalPurges = purges.journalPurges - journalPurgesApplied
+                journalPurgesApplied = emptySet()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -716,8 +737,34 @@ internal class LearnRunner(
         val had = journal?.size ?: 0
         journal = null
         journalUnsaved = 0
-        wipe("journal") { journalStore.wipe() }
+        // 整份删掉了,没有还要补做的;删不掉的话记着的留着,读得出来时补做
+        if (wipe("journal") { journalStore.wipe() }) {
+            if (purges.journalPurges.isNotEmpty()) purges.journalPurges = emptySet()
+            journalPurgesApplied = emptySet()
+        }
         if (had > 0) publish(status)
+    }
+
+    /**
+     * 从通知原文里去掉这几个 App 的。和 [digestRemove] 一个做法:删掉了就先记进 [purges] 再存,存上了才划掉([saveJournal]);
+     * 这时读不出来的记下来,读得出来时补做([loadedJournal])。不记的话,读不出来那次等于没删,删了没存上、进程又没了的
+     * 文件里还是旧的——之后这个 App 又被允许,两天内的旧原文就又能被读到、被拿去归纳。
+     * 不因为读不出来就整份删:[forgetApps] 每次名单变动都带着整个不够格的名单来,密钥库一时不可用就会把攒下的原文全删光。
+     */
+    private fun journalRemove(packages: Set<String>) {
+        if (packages.isEmpty()) return
+        val j = loadedJournal()
+        if (j == null) {
+            if (!purges.journalPurges.containsAll(packages)) purges.journalPurges = purges.journalPurges + packages
+            return
+        }
+        if (j.removePackages { it !in packages }) {
+            if (!purges.journalPurges.containsAll(packages)) purges.journalPurges = purges.journalPurges + packages
+            journalPurgesApplied = journalPurgesApplied + packages
+            saveJournal()
+        } else if (packages.any { it in purges.journalPurges }) {
+            saveJournal()
+        }
     }
 
     // ---- 带进任务的那一段 ----
@@ -1655,6 +1702,7 @@ internal class LearnRunner(
             override var topicPurges: Set<String> = emptySet()
             override var contactPurges: Set<String> = emptySet()
             override var digestPurges: Set<String> = emptySet()
+            override var journalPurges: Set<String> = emptySet()
         }
 
         /** 系统的移除原因 → 用户做了什么。点开、单独划掉才算;「全部清除」和别的都不说明什么。 */

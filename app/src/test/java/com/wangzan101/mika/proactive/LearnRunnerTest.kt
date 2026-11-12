@@ -139,12 +139,20 @@ class LearnRunnerTest {
         var saves = 0
         var wipes = 0
         var failLoad = false
+        var failSave = false
+        var failWipe = false
         override fun load(): NoticeJournalData? {
             if (failLoad) throw java.security.KeyStoreException("busy")
             return data
         }
-        override fun save(data: NoticeJournalData) { this.data = data; saves++ }
-        override fun wipe() { data = null; wipes++ }
+        override fun save(data: NoticeJournalData) {
+            if (failSave) throw java.io.IOException("disk")
+            this.data = data; saves++
+        }
+        override fun wipe() {
+            if (failWipe) throw java.io.IOException("could not delete")
+            data = null; wipes++
+        }
         val texts get() = data?.entries.orEmpty().map { it.text }
     }
 
@@ -177,6 +185,8 @@ class LearnRunnerTest {
         override var contactPurges: Set<String> = emptySet()
             set(v) { field = v; writes++ }
         override var digestPurges: Set<String> = emptySet()
+            set(v) { field = v; writes++ }
+        override var journalPurges: Set<String> = emptySet()
             set(v) { field = v; writes++ }
     }
 
@@ -1045,6 +1055,92 @@ class LearnRunnerTest {
         // 清掉另一个 App 的:有改动,存一次盘(这个实例没在看守,没有锁屏来触发存盘)
         again.clearApp("com.gone")
         assertEquals(listOf("王老师" to "明天开会", "李老师" to "收到"), e.journal.data!!.entries.map { it.sender to it.text })
+    }
+
+    /** 换一个进程:同样的文件、同样记着的待删,新的实例。 */
+    private fun newProcess(e: Env) = LearnRunner(
+        TriageHooks(target = { target }, model = { null }, tokensToday = { 0 }, callsToday = { 0 },
+            usageVersion = { MutableStateFlow(0L) }, busy = MutableStateFlow(false)),
+        on = { true }, consent = { TriageConsent.of(target) }, budgetLimit = { 1 }, language = { "English" },
+        eligible = { it !in e.optOut }, sensitive = { false },
+        store = e.store, contactStore = e.contacts, purges = e.purges,
+        digest = { true }, journalStore = e.journal, digestStore = e.digestStore, clock = { e.now() }, zone = { ZoneOffset.UTC },
+    )
+
+    private fun rawApps(e: Env) = e.journal.data?.entries.orEmpty().map { it.packageName }
+
+    // 不再从这个 App 归纳时原文那份正好读不出来:记下来,读得出来时先补删。不然之后这个 App 又被允许,旧原文就又回来了
+    @Test fun revokedAppsRawTextIsRemovedOnceTheJournalLoadsAgain() = runTest {
+        val e = Env(this)
+        e.journal.data = NoticeJournalData(sinceMs = e.now() - 2_000, entries = listOf(
+            NoticeEntry("com.a", e.now() - 1_000, "旧会话", text = "撤销之前的原文"),
+            NoticeEntry("com.b", e.now() - 900, "别的", text = "别的 App 的"),
+        ))
+        e.digest = true
+        e.journal.failLoad = true
+        e.optOut += "com.a"
+        e.runner.forgetApps(setOf("com.a"))
+        assertEquals(setOf("com.a"), e.purges.journalPurges)
+        assertEquals("读不出来不整份删", 0, e.journal.wipes)
+        // 之后读得出来了,这个 App 也重新被允许
+        e.journal.failLoad = false
+        e.optOut -= "com.a"
+        val view = e.runner.notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!
+        assertEquals(listOf("com.b"), view.entries.map { it.packageName })
+        assertEquals(listOf("com.b"), rawApps(e))
+        assertTrue("存上了就不再记着", e.purges.journalPurges.isEmpty())
+        // 重新允许之后新来的照常记、照常留着:换一个进程也不会被上次的待删带走
+        e.runner.capture(NoticeRecord("n1", "com.a", e.now(), "新会话", "重新允许之后的"))
+        lockAndUnlock(e)
+        val again = newProcess(e)
+        assertEquals(listOf("com.b", "com.a"), again.notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!.entries.map { it.packageName })
+    }
+
+    // 删了却没存上、进程又没了:文件里还是旧的。记着的待删在下次读出来时补做
+    @Test fun revokedAppsRawTextStaysDeletedAfterAFailedSaveAndARestart() = runTest {
+        val e = Env(this)
+        e.digest = true
+        e.post(pkg = "com.a", count = 2)
+        e.post(pkg = "com.b", count = 1)
+        lockAndUnlock(e)
+        assertEquals(3, rawApps(e).size)
+        e.journal.failSave = true
+        e.optOut += "com.a"
+        e.runner.forgetApps(setOf("com.a"))
+        assertEquals("没存上:文件里还是三条", 3, rawApps(e).size)
+        assertEquals(setOf("com.a"), e.purges.journalPurges)
+        e.journal.failSave = false
+        e.optOut -= "com.a"
+        val again = newProcess(e)
+        assertEquals(listOf("com.b"), again.notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!.entries.map { it.packageName })
+        assertEquals(listOf("com.b"), rawApps(e))
+        assertTrue(e.purges.journalPurges.isEmpty())
+    }
+
+    // 「清掉这个 App 的」时原文读不出来:整份删;连删也删不掉的话记着这个 App,读得出来时补做
+    @Test fun clearingAnAppWhileTheJournalCanNeitherBeReadNorDeletedIsReplayedLater() = runTest {
+        val e = Env(this)
+        e.journal.data = NoticeJournalData(sinceMs = e.now() - 2_000, entries = listOf(
+            NoticeEntry("com.a", e.now() - 1_000, "旧会话", text = "要清掉的"),
+            NoticeEntry("com.b", e.now() - 900, "别的", text = "别的 App 的"),
+        ))
+        e.digest = true
+        e.journal.failLoad = true
+        e.journal.failWipe = true
+        e.runner.clearApp("com.a")
+        assertEquals(setOf("com.a"), e.purges.journalPurges)
+        e.journal.failLoad = false
+        e.journal.failWipe = false
+        assertEquals(listOf("com.b"), newProcess(e).notices(e.now() - 10_000, e.now() + 1, LearnLevel.Balanced) { SourceTier.High }!!.entries.map { it.packageName })
+        assertTrue(e.purges.journalPurges.isEmpty())
+        // 删得掉的时候整份删了,就没有要补做的
+        val e2 = Env(this)
+        e2.journal.data = NoticeJournalData(sinceMs = e2.now() - 2_000, entries = listOf(NoticeEntry("com.a", e2.now() - 1_000, "旧会话", text = "要清掉的")))
+        e2.digest = true
+        e2.journal.failLoad = true
+        e2.runner.clearApp("com.a")
+        assertEquals(1, e2.journal.wipes)
+        assertTrue(e2.purges.journalPurges.isEmpty())
     }
 
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)

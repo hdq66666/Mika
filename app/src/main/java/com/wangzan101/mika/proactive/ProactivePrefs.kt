@@ -98,6 +98,11 @@ class ProactivePrefs(private val prefs: SharedPreferences) : LearnPurges, AllowR
         get() = prefs.getStringSet(LEARN_PURGE_DIGEST, null)?.toSet().orEmpty()
         set(v) { prefs.edit().putStringSet(LEARN_PURGE_DIGEST, HashSet(v)).commit() }
 
+    /** 通知原文上还没落盘的按 App 删除(包名)。 */
+    override var journalPurges: Set<String>
+        get() = prefs.getStringSet(LEARN_PURGE_JOURNAL, null)?.toSet().orEmpty()
+        set(v) { prefs.edit().putStringSet(LEARN_PURGE_JOURNAL, HashSet(v)).commit() }
+
     /** 用户选了「不读」、名单文件没写成的 App(只有包名);启动时补做([AllowEdits.replay])。 */
     override var allowRevoked: Set<String>
         get() = prefs.getStringSet(ALLOW_REVOKED, null)?.toSet().orEmpty()
@@ -121,6 +126,7 @@ class ProactivePrefs(private val prefs: SharedPreferences) : LearnPurges, AllowR
         private const val HINT_TALK_DAY = "hint_talk_day"
         private const val LEARN_PURGE_CONTACTS = "learn_purge_contacts"
         private const val LEARN_PURGE_DIGEST = "learn_purge_digest"
+        private const val LEARN_PURGE_JOURNAL = "learn_purge_journal"
         private const val ALLOW_REVOKED = "allow_revoked"
     }
 }
