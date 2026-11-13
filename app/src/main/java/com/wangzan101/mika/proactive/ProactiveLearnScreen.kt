@@ -873,6 +873,7 @@ private fun kindLabel(k: TopicKind): Int = when (k) {
 
 /**
  * 「清空来自它的」列哪些 App:话题上有它的证据、有它的联系人,分段归纳、当日(周、月)归纳里有依据过它的句子,
+ * 某一份归纳的概述是照着它的句子写的(概述还在时才算;分段归纳到期之后,它可能只剩在概述里),
  * 或者还留着它的通知原文([raw])——刚来了几条通知、还没归纳出任何东西的 App 只有原文,不列它就只能全部清空。
  */
 internal fun clearableApps(
@@ -886,8 +887,15 @@ internal fun clearableApps(
     topics.forEach { addAll(it.evidence.keys) }
     contacts.forEach { add(it.packageName) }
     notes.forEach { add(it.packageName) }
-    days.forEach { d -> d.lines.forEach { addAll(it.apps) } }
-    spans.forEach { s -> s.lines.forEach { addAll(it.apps) } }
+    // 概述清掉之后来源记录可能还留着:只在概述还有字时才算,不然列出来的 App 其实已经没东西可清
+    days.forEach { d ->
+        d.lines.forEach { addAll(it.apps) }
+        if (d.brief.isNotEmpty()) addAll(d.briefApps)
+    }
+    spans.forEach { s ->
+        s.lines.forEach { addAll(it.apps) }
+        if (s.brief.isNotEmpty()) addAll(s.briefApps)
+    }
     addAll(raw)
 }
 
