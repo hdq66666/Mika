@@ -508,7 +508,10 @@ internal class LearnRunner(
         val c = loadedContacts()
         val contactsCleared: Boolean
         if (c != null) {
-            contactsCleared = !c.clear() || saveContacts(c) || wipe("contacts") { contactStore.wipe() }
+            // 内存里本来就是空的也照存:可能是之前删了却没存上,文件里还是旧的——这时跳过不存,
+            // 下面又把记着的待删划掉,旧的联系人下次启动就回来了
+            c.clear()
+            contactsCleared = saveContacts(c) || wipe("contacts") { contactStore.wipe() }
         } else {
             contactsCleared = wipe("contacts") { contactStore.wipe() }
             contactPool = ContactPool()

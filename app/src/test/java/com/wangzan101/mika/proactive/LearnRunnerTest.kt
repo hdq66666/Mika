@@ -1209,6 +1209,68 @@ class LearnRunnerTest {
         for (left in listOf(e.purges.topicPurges, e.purges.contactPurges, e.purges.journalPurges, e.purges.digestPurges)) assertTrue(left.isEmpty())
     }
 
+    // 单删一个联系人没存上(内存里已经空了,文件里还在),再清空全部:内存是空的也得把文件清掉,不能只把待删划掉
+    @Test fun clearAllAfterAnUnsavedContactDeleteStillCleansTheFile() = runTest {
+        fun seeded() = Env(this).also {
+            it.contacts.data = ContactPoolData(contacts = listOf(ObservedContact("c1", "com.a", "张三", 1L, start, days = listOf(20_000L))))
+        }
+        // 清空时存储已经好了:存上空的,不再记着
+        seeded().let { e ->
+            e.contacts.failSave = true
+            e.runner.deleteContact("c1")
+            assertEquals(setOf(":contact:c1"), e.purges.contactPurges)
+            assertEquals("没存上,文件里还在", 1, e.contacts.data.contacts.size)
+            e.contacts.failSave = false
+            e.runner.clearAll()
+            assertTrue(e.contacts.data.contacts.isEmpty())
+            assertTrue(e.purges.contactPurges.isEmpty())
+            val again = newProcess(e)
+            again.open()
+            assertTrue(again.contactsView.value.contacts.isEmpty())
+        }
+        // 清空时还是存不上:退到删文件
+        seeded().let { e ->
+            e.contacts.failSave = true
+            e.runner.deleteContact("c1")
+            e.runner.clearAll()
+            assertEquals(1, e.contacts.wipes)
+            assertTrue(e.contacts.data.contacts.isEmpty())
+            assertTrue(e.purges.contactPurges.isEmpty())
+        }
+        // 清空时既存不上也删不掉:待删不能丢,记成「全清」;存储好了之后补清
+        seeded().let { e ->
+            e.contacts.failSave = true
+            e.runner.deleteContact("c1")
+            e.contacts.failWipe = true
+            e.runner.clearAll()
+            assertEquals(setOf(":all"), e.purges.contactPurges)
+            assertEquals(1, e.contacts.data.contacts.size)
+            e.contacts.failSave = false
+            e.contacts.failWipe = false
+            val again = newProcess(e)
+            again.open()
+            assertTrue(again.contactsView.value.contacts.isEmpty())
+            assertTrue(e.contacts.data.contacts.isEmpty())
+            assertTrue(e.purges.contactPurges.isEmpty())
+        }
+    }
+
+    // 第一次清空全部时联系人既没存上也没删掉,存储好了之后在同一个进程里再清一次:内存早就空了,这一次也要真的把文件清掉
+    @Test fun aSecondClearAllFinishesWhatTheFirstCouldNot() = runTest {
+        val e = Env(this)
+        e.contacts.data = ContactPoolData(contacts = listOf(ObservedContact("c1", "com.a", "张三", 1L, start, days = listOf(20_000L))))
+        e.contacts.failSave = true
+        e.contacts.failWipe = true
+        e.runner.clearAll()
+        assertEquals(setOf(":all"), e.purges.contactPurges)
+        assertEquals(1, e.contacts.data.contacts.size)
+        e.contacts.failSave = false
+        e.contacts.failWipe = false
+        e.runner.clearAll()
+        assertTrue(e.contacts.data.contacts.isEmpty())
+        assertTrue(e.purges.contactPurges.isEmpty())
+    }
+
     // 清空全部正常做完:没有记着的待删(以前记着的也一并划掉)
     @Test fun clearAllLeavesNoPendingDeletionsWhenItWorked() = runTest {
         val e = Env(this)
