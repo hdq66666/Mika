@@ -440,6 +440,8 @@ class ProactiveRuntime(
         hintBoard.dismissed(key)
         inbox.remove(key)
         learn.removed(key, reason)
+        // 用户处理掉了这一条:同一个键的下一条从头数,不接着算成「同一条在重发」(见 [LiveUpdates.ended])
+        live.ended(key)
     }
 
     // ---- 内部 ----

@@ -199,6 +199,23 @@ class LearnBufferTest {
         assertEquals(listOf(true, false), b.begin("com.shop").map { it.titleIsSpeaker })
     }
 
+    // 被认成状态显示的那条通知之后被划掉:它的事件已经去掉了,不往回找同一个键上更早的、不相干的那条算反馈
+    @Test fun dismissingAWithdrawnStatusDisplayDoesNotReachAnOlderEventOfTheKey() {
+        val b = LearnBuffer()
+        b.capture(rec("shared", at = 1_000, text = "一小时前的正常通知"))
+        val old = b.begin("com.shop").single()
+        b.finish(mapOf(old.seq to setOf("k1")))
+        repeat(3) { i -> b.capture(rec("shared", at = 3_600_000L + i * 2_000L, text = "${300 - i * 10} 米后右转")) }
+        assertTrue(b.forgetKey("shared", 3_600_000L - 60_000L))
+        assertTrue(b.outcome("shared", LearnOutcome.Dismissed).isEmpty())
+        // 只挡这一次:这个键上又收下新的一条之后照常
+        b.forgetKey("shared", 7_200_000L)
+        b.capture(rec("shared", at = 9_000_000L, text = "新的正常通知"))
+        val next = b.begin("com.shop").single()
+        b.finish(mapOf(next.seq to setOf("k2")))
+        assertEquals(setOf("k2"), b.outcome("shared", LearnOutcome.Opened))
+    }
+
     @Test fun evictsDistilledFirstThenOldestPending() {
         val b = LearnBuffer(capacity = 3)
         b.capture(rec("a")); b.capture(rec("b"))

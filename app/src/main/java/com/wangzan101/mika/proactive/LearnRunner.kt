@@ -197,7 +197,7 @@ interface LearnPurges {
     }
     /** 分段归纳的句子和各级归纳上还没落盘的。 */
     var digestPurges: Set<String>
-    /** 通知原文上还没落盘的:要去掉其全部原文的 App 包名。 */
+    /** 通知原文上还没落盘的:要去掉其全部原文的 App 包名,和「某个通知键某一阵的那几段」的记号(只有键的哈希和时间)。 */
     var journalPurges: Set<String>
 }
 
@@ -394,13 +394,35 @@ internal class LearnRunner(
      * 还没归纳的那几条去掉,通知原文里的也去掉。同一个键上更早的不动——很多 App 所有推送共用一个通知键。
      */
     fun dropLive(key: String, packageName: String, sinceMs: Long) {
-        // 正在给这个 App 写分段归纳的那一批里可能就有这几条:取消(和清掉一个 App 时一样)。不然回复回来,
-        // 照着刚去掉的原文写的句子还是进了归纳。剩下的原文留着,到期了再发
-        val stopped = notesApp == packageName
+        // 在途的请求里可能就有这几条:正在给这个 App 写分段归纳的那一批,或正在归纳话题的那一批里这个键这一阵的事件。
+        // 取消(和清掉一个 App 时一样):不然回复回来,照着它们写的句子、归纳出的话题还是存下了。
+        // 取消后归纳话题的那一批回到待归纳,下面一并去掉(不然锁屏之类再取消一次,它们又会被发出去);剩下的照常再发
+        val stopped = notesApp == packageName || buffer.sending().any { it.key == key && it.postedAtMs >= sinceMs }
         if (stopped) stopRequest()
         buffer.forgetKey(key, sinceMs)
-        if (on() && digest()) loadedJournal()?.let { if (it.removeKey(com.wangzan101.mika.core.proactive.NoticeDedup.idOf(key), sinceMs)) saveJournal() }
+        if (on() && digest()) {
+            // 通知原文里的:和按 App 删一样先记下来(见 [LearnPurges.journalPurges])。这会儿读不出来的、去掉了没存上的,
+            // 读得出来时补做——不然它们还算没归纳过,下一次分段归纳又发给模型
+            val keyId = com.wangzan101.mika.core.proactive.NoticeDedup.idOf(key)
+            val mark = MARK_KEY + keyId + KEY_SINCE + sinceMs
+            val j = loadedJournal()
+            if (j == null) {
+                purges.journalPurges = purges.journalPurges + mark
+            } else if (j.removeKey(keyId, sinceMs, sinceMs + LIVE_WINDOW_MS)) {
+                purges.journalPurges = purges.journalPurges + mark
+                journalPurgesApplied = journalPurgesApplied + mark
+                saveJournal()
+            }
+        }
         if (stopped && host != null) evaluate()
+    }
+
+    /** 记着的「这个通知键这一阵的去掉」:键的哈希、从什么时候起;不是这种记号、写得不对的为 null。 */
+    private fun keyIn(mark: String): Pair<String, Long>? {
+        if (!mark.startsWith(MARK_KEY)) return null
+        val parts = mark.removePrefix(MARK_KEY).split(KEY_SINCE)
+        val since = parts.getOrNull(1)?.toLongOrNull()
+        return if (parts.size == 2 && parts[0].isNotEmpty() && since != null) parts[0] to since else null
     }
 
     /** 记进通知日志;攒够 [JOURNAL_FLUSH_EVERY] 段没存的就存一次(进程在两次存盘之间没了,最多丢这么多段,或上次锁屏之后的)。 */
@@ -782,6 +804,8 @@ internal class LearnRunner(
                 val pending = purges.journalPurges
                 if (pending.isNotEmpty()) {
                     it.removePackages { p -> MARK_ALL !in pending && p !in pending }
+                    // 记着的状态显示(见 dropLive):只去掉那一阵的——同一个键上之后的正常通知不动
+                    for (w in pending) keyIn(w)?.let { (keyId, since) -> it.removeKey(keyId, since, since + LIVE_WINDOW_MS) }
                     journalPurgesApplied = journalPurgesApplied + pending
                 }
                 // 读进来时就有过期的:内存里已经去掉了,文件里还在——马上存一次(存里面会刷新页面上的数)
@@ -1769,6 +1793,11 @@ internal class LearnRunner(
         private const val MARK_ALL = ":all"
         private const val MARK_TOPIC = ":topic:"
         private const val MARK_CONTACT = ":contact:"
+        /** 通知原文上:某个通知键某一阵的那几段。后面是键的哈希、[KEY_SINCE]、从什么时候起(毫秒)。 */
+        private const val MARK_KEY = ":key:"
+        private const val KEY_SINCE = "@"
+        /** 那一阵有多长:认状态显示时往回看的窗口。 */
+        private const val LIVE_WINDOW_MS = com.wangzan101.mika.core.proactive.LiveUpdates.WINDOW_MS
         /** 一次合并:后面是并掉的话题 id、[MERGE_INTO]、并进去的话题 id。话题、联系人两份上都可能记着。 */
         private const val MARK_MERGE = ":merge:"
         private const val MERGE_INTO = ">"

@@ -51,6 +51,8 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
     data class Summary(val total: Int = 0, val pending: Int = 0)
 
     private val events = ArrayList<LearnEvent>()
+    /** 刚被认成状态显示、事件已经去掉的键(见 [forgetKey]):它被点开、划掉时不往回找。 */
+    private val withdrawn = HashSet<String>()
     private var seq = 0L
     private val mutable = MutableStateFlow(Summary())
     val state: StateFlow<Summary> = mutable.asStateFlow()
@@ -75,6 +77,7 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
             events[i] = events[i].copy(seenAtMs = maxOf(events[i].seenAtMs, record.postedAtMs))
             return false
         }
+        withdrawn.remove(record.key)
         events += LearnEvent(
             ++seq, record.key, record.packageName, record.postedAtMs, title, text, sig = sig, group = record.group,
             titleIsSpeaker = record.titleIsSpeaker,
@@ -105,6 +108,8 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
      * 那条已经归纳过了的,返回它归到的话题(由调用方补到话题池上);否则返回空。
      */
     fun outcome(key: String, outcome: LearnOutcome): Set<String> {
+        // 被处理掉的是一条状态显示:它的事件已经去掉了,往回找只会找到同一个键上更早的、不相干的通知,把这次点开/划掉算到那个话题头上
+        if (withdrawn.remove(key)) return emptySet()
         if (outcome == LearnOutcome.None) return emptySet()
         val i = events.indexOfLast { it.key == key }
         if (i < 0) return emptySet()
@@ -129,9 +134,11 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
 
     /**
      * 这个键其实是一条被反复重发的状态显示(见 [LiveUpdates]):它从 [sinceMs] 起收进来、还没发出去归纳的那几条去掉。
-     * 更早的、正在发的那一批不动。有去掉的返回 true。
+     * 更早的、正在发的那一批不动(在发的由调用方先取消)。有去掉的返回 true。
+     * 这条通知之后被点开、划掉不算对哪个话题的反馈(见 [outcome]),直到这个键上又收下新的一条。
      */
     fun forgetKey(key: String, sinceMs: Long): Boolean {
+        withdrawn += key
         // 只去掉这一阵重发收进来的:很多 App 所有推送共用一个通知键,同一个键上更早的那条正常通知不能跟着丢
         val gone = events.removeAll { it.key == key && it.state == LearnEvent.State.Pending && it.postedAtMs >= sinceMs }
         if (gone) publish()

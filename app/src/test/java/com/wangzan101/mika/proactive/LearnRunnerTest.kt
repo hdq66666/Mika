@@ -1683,6 +1683,89 @@ class LearnRunnerTest {
         assertEquals(19, e.runner.state.value.journal)
     }
 
+    // 认出状态显示时,归纳话题的请求正带着它刚收进来的那几条在途:取消,那几条去掉。不然回复回来,照着它们归纳出的话题还是存下了;
+    // 锁屏再取消一次的话,它们回到待归纳,解锁后又发给模型
+    @Test fun aLearnRequestInFlightIsCancelledWhenItCarriesAStatusDisplay() = runTest {
+        val e = Env(this)
+        repeat(9) { i -> e.runner.capture(NoticeRecord("normal-$i", "com.maps", e.now(), "普通通知 $i", "普通内容 $i")) }
+        e.model.gate = CompletableDeferred()
+        e.model.reply = { """{"signals":[{"ids":["n10"],"new":{"kind":"routine","label":"导航播报"}}]}""" }
+        repeat(3) { i -> e.runner.capture(NoticeRecord("nav", "com.maps", e.now() + i * 2_000L, "导航", "NAV_TEXT_$i")) }
+        runCurrent()
+        assertEquals(1, e.model.calls.size)
+        assertTrue(e.runner.requestActive)
+        assertTrue(e.model.input(0).contains("NAV_TEXT_0"))
+        e.runner.dropLive("nav", "com.maps", e.now() - 60_000L)
+        runCurrent()
+        assertFalse(e.runner.requestActive)
+        assertEquals(1, e.model.cancelled)
+        assertEquals(9, e.runner.state.value.pending)
+        e.model.gate!!.complete(Unit)
+        runCurrent()
+        assertTrue(e.store.data.topics.isEmpty())
+        // 剩下的照常再发(到期之后),里面没有那几条
+        e.model.gate = null
+        e.model.reply = { """{"signals":[]}""" }
+        wait(LearnTuning.DUE_AGE_MS + 1)
+        e.post(pkg = "com.other")
+        val resent = e.model.calls.indices.first { it > 0 && e.model.packages()[it] == "com.maps" }
+        assertTrue(e.model.input(resent).contains("普通内容 0"))
+        assertFalse(e.model.input(resent).contains("NAV_TEXT"))
+        // 别的键、这个键更早的事件在途时不取消
+        val f = Env(this)
+        f.model.gate = CompletableDeferred()
+        f.post(pkg = "com.maps", count = 12)
+        assertTrue(f.runner.requestActive)
+        f.runner.dropLive("nav", "com.maps", f.now() - 60_000L)
+        f.runner.dropLive("k1", "com.maps", f.now() + 1)
+        assertTrue(f.runner.requestActive)
+    }
+
+    // 认出状态显示的那一刻通知原文读不出来(密钥库一时不可用):记下来,读得出来时先去掉那一阵的再选批。
+    // 不然它们还算没归纳过,下一次分段归纳又发给模型。同一个键上之后的正常通知不动
+    @Test fun aStatusDisplaysRawTextIsRemovedOnceTheJournalLoadsAgain() = runTest {
+        val e = Env(this)
+        e.digest = true
+        val since = start - 60_000L
+        val keyId = com.wangzan101.mika.core.proactive.NoticeDedup.idOf("nav")
+        e.journal.data = NoticeJournalData(sinceMs = start - 3_600_000L, entries = listOf(
+            NoticeEntry("com.maps", start - 3_000_000L, "更早的正常通知", text = "同一个键", keyId = keyId),
+            NoticeEntry("com.maps", start - 30_000L, "导航", text = "300 米后右转", keyId = keyId),
+            NoticeEntry("com.maps", start - 20_000L, "导航", text = "200 米后右转", keyId = keyId),
+            NoticeEntry("com.maps", start - 10_000L, "周边优惠", text = "另一个键", keyId = "other"),
+            NoticeEntry("com.maps", start + 600_000L, "之后的正常通知", text = "同一个键", keyId = keyId),
+        ))
+        e.journal.failLoad = true
+        e.runner.dropLive("nav", "com.maps", since)
+        assertEquals(1, e.purges.journalPurges.size)
+        assertEquals(5, e.journal.data!!.entries.size)
+        e.journal.failLoad = false
+        e.runner.open()
+        assertEquals(listOf("更早的正常通知", "周边优惠", "之后的正常通知"), e.journal.data!!.entries.map { it.title })
+        assertTrue(e.purges.journalPurges.isEmpty())
+    }
+
+    // 原文去掉了却没存上、进程没了:文件里还是旧的,下次读出来补做
+    @Test fun aStatusDisplaysRawTextRemovalSurvivesAFailedSave() = runTest {
+        val e = Env(this)
+        e.digest = true
+        wait(60_000L)
+        repeat(3) { i -> e.runner.capture(NoticeRecord("nav", "com.maps", e.now() - 6_000L + i * 2_000L, "${300 - i * 10} 米后右转", "某某路")) }
+        e.runner.capture(NoticeRecord("promo", "com.maps", e.now() - 9, "周边优惠", "满减券到账"))
+        runCurrent()
+        lockAndUnlock(e)
+        assertEquals(4, e.journal.data!!.entries.size)
+        e.journal.failSave = true
+        e.runner.dropLive("nav", "com.maps", e.now() - 60_000L)
+        assertEquals(4, e.journal.data!!.entries.size)
+        assertEquals(1, e.purges.journalPurges.size)
+        e.journal.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf("周边优惠"), e.journal.data!!.entries.map { it.title })
+        assertTrue(e.purges.journalPurges.isEmpty())
+    }
+
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)
     @Test fun journalFollowsEveryPurgePath() = runTest {
         fun Env.seed(): Env {

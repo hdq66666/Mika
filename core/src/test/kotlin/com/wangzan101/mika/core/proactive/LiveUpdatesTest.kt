@@ -10,6 +10,24 @@ class LiveUpdatesTest {
     private fun post(key: String, at: Long, text: String, silent: Boolean = true, category: String? = null, pkg: String = "com.maps") =
         NoticeRecord(key, pkg, at, "标题", text, category = category, silent = silent)
 
+    // 很多 App 所有推送共用一个通知键:一分钟里来了几条各不相干的,用户一条条点开、划掉了——不是同一条在重发
+    @Test fun notificationsTheUserDealtWithOneByOneAreNotCountedAsOneBeingReposted() {
+        val live = LiveUpdates()
+        repeat(6) { i ->
+            assertEquals(Verdict.Normal, live.observe(post("shared", t0 + i * 10_000L, "第 $i 件事")))
+            live.ended("shared")
+        }
+        // 没处理掉的照旧数
+        val other = LiveUpdates()
+        assertEquals(listOf(Verdict.Normal, Verdict.Normal, Verdict.Normal, Verdict.BecameLive),
+            (0 until 4).map { i -> other.observe(post("shared", t0 + i * 10_000L, "第 $i 件事")) })
+        // 认成状态显示的那条被划掉:同一个键的下一条从头数;真在重发的,数够了照样再认出来
+        other.ended("shared")
+        assertEquals(listOf(Verdict.Normal, Verdict.Normal, Verdict.Normal, Verdict.BecameLive, Verdict.Live),
+            (5 until 10).map { i -> other.observe(post("shared", t0 + i * 2_500L + 60_000L, "${i} 米后右转")) })
+        other.ended("nothing")
+    }
+
     // 真机上看到的导航播报:一条普通的可清除通知,没有类别,不出声,每两三秒重发一次,距离一变就是另一段字
     @Test fun aSilentNotificationRepostedEveryFewSecondsIsAStatusDisplay() {
         val live = LiveUpdates()

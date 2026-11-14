@@ -188,7 +188,8 @@ class NoticeJournal(
      * 这个键([keyId] 是通知键的哈希)其实是一条被反复重发的状态显示(见 [LiveUpdates]):它从 [sinceMs] 起记下、还没做分段归纳的那几段去掉。
      * 更早的(同一个键上以前的正常通知)和已经归纳过的不动(句子已经写出来了,原文留着给它作依据)。有去掉的返回 true。
      */
-    fun removeKey(keyId: String, sinceMs: Long): Boolean = entries.removeAll { it.keyId == keyId && !it.noted && it.atMs >= sinceMs }
+    fun removeKey(keyId: String, sinceMs: Long, untilMs: Long = Long.MAX_VALUE): Boolean =
+        entries.removeAll { it.keyId == keyId && !it.noted && it.atMs in sinceMs..untilMs }
 
     /** 现在留着哪些 App 的通知原文(只有包名,不带内容)。 */
     fun packages(): Set<String> = entries.mapTo(LinkedHashSet()) { it.packageName }

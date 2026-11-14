@@ -58,6 +58,15 @@ class LiveUpdates(private val capacity: Int = 200) {
         return Verdict.Normal
     }
 
+    /**
+     * 用户点开、划掉了这个键上的通知:这一条到此为止,同一个键的下一条从头数(原来被认成状态显示的,也重新认)。
+     * 不这样的话:很多 App 所有推送共用一个通知键,用户一条条处理掉的几条各不相干的通知,也会被数成「同一条在重发」。
+     * App 自己撤回再发的不算(那多半就是在重发),只有用户动的手才调这里。真的状态显示被划掉后接着重发的,数到第几次照样再认出来。
+     */
+    fun ended(key: String) {
+        tracks.remove(key)
+    }
+
     fun clear() = tracks.clear()
 
     companion object {
