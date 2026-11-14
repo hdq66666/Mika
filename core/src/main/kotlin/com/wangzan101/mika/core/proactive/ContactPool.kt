@@ -157,7 +157,8 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
         allowSensitive: Boolean = false,
         strategy: ContactIdStrategy = LearnTuning.CONTACT_ID,
     ): Applied {
-        val ids = events.map { ContactIdentity.of(it.packageName, it.key, it.title, strategy) }
+        // 标题是发言人、不是会话名的(没有会话名的群聊)认不出是哪个会话:不记
+        val ids = events.map { if (it.titleIsSpeaker) null else ContactIdentity.of(it.packageName, it.key, it.title, strategy) }
         // 「不再记录」的名单里可能还是按以前的算法(带着通知键)记的 id:这条通知按以前的算法正好是它,就把现在的 id 也记进去。
         // 不然换了算法,用户删掉的联系人就悄悄回来了
         // 名单因此变长也算改动:要存上。不然进程一重启、通知键又换了,以前的 id 对不上,删掉的就回来了

@@ -40,12 +40,21 @@ object NoticeShapes {
 
     /**
      * 会话样式的群聊:系统把通知标题写成「会话名: 发言人」(发言人取最新一条消息的),会话名另放在一个字段里。
-     * 拿标题当会话名的话,同一个群里每个人说话都成了另一个「会话」。有会话名就用它当标题;是不是群听系统的,
-     * 系统没说时有会话名就当群(按系统的约定,会话名只给群聊设)。没有会话名的是私聊,标题本来就是对方,不动。
+     * 拿标题当会话名的话,同一个群里每个人说话都成了另一个「会话」。有会话名就用它当标题,标题里的发言人放到 [NoticeRecord.sender]
+     * (提醒、判定里的那一句带上是谁说的)。
+     *
+     * 是不是群:系统说是就是;系统没说、有会话名的当群(老写法里会话名只给群聊设)。系统说不是、却有会话名的看不出来——
+     * 老的写法只设会话名、不另说是群,新的写法也可以给私聊起会话名——留给模型判断,不硬说是私聊。
+     *
+     * 没有会话名:私聊的标题本来就是对方,不动。群聊(系统说是群)的标题是最新一条的发言人,认不了会话,记上一笔。
      */
     private fun styled(r: NoticeRecord): NoticeRecord {
         val name = r.conversationTitle?.trim().orEmpty()
-        return if (name.isEmpty()) r else r.copy(title = name, group = r.group ?: true)
+        if (name.isEmpty()) return if (r.group == true) r.copy(titleIsSpeaker = true) else r
+        val rest = r.title.trim().removePrefix(name).trimStart()
+        val speaker = if (rest.startsWith(":") || rest.startsWith("：")) rest.drop(1).trim() else ""
+        // 发言人就是会话名的(以对方的名字当会话名的私聊)不另记,和 [chat] 里一样
+        return r.copy(title = name, sender = speaker.takeIf { it.isNotEmpty() && it != name }, group = if (r.group == false) null else true)
     }
 
     /**

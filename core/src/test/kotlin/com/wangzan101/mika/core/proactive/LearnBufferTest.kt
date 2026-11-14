@@ -191,6 +191,14 @@ class LearnBufferTest {
         assertEquals(setOf("k4"), b.outcome("z", LearnOutcome.Dismissed))
     }
 
+    // 「标题是发言人」这一笔跟着事件走(认联系人时要看)
+    @Test fun theSpeakerTitleMarkTravelsWithTheEvent() {
+        val b = LearnBuffer()
+        b.capture(rec("a").copy(group = true, titleIsSpeaker = true))
+        b.capture(rec("b"))
+        assertEquals(listOf(true, false), b.begin("com.shop").map { it.titleIsSpeaker })
+    }
+
     @Test fun evictsDistilledFirstThenOldestPending() {
         val b = LearnBuffer(capacity = 3)
         b.capture(rec("a")); b.capture(rec("b"))

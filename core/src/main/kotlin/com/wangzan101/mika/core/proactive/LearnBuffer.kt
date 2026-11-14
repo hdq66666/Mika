@@ -35,6 +35,8 @@ data class LearnEvent(
     val group: Boolean? = null,
     /** 这段文字最近一次出现(原样重发也算)的时间:离它够久再出现才算新的一次(见 [LearnTuning.REPEAT_WINDOW_MS])。 */
     val seenAtMs: Long = postedAtMs,
+    /** [title] 是发言人、不是会话的名字(见 [NoticeRecord.titleIsSpeaker]):不拿它认联系人。 */
+    val titleIsSpeaker: Boolean = false,
 ) {
     enum class State { Pending, Sending, Done }
 }
@@ -73,7 +75,10 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
             events[i] = events[i].copy(seenAtMs = maxOf(events[i].seenAtMs, record.postedAtMs))
             return false
         }
-        events += LearnEvent(++seq, record.key, record.packageName, record.postedAtMs, title, text, sig = sig, group = record.group)
+        events += LearnEvent(
+            ++seq, record.key, record.packageName, record.postedAtMs, title, text, sig = sig, group = record.group,
+            titleIsSpeaker = record.titleIsSpeaker,
+        )
         evict()
         publish()
         return true

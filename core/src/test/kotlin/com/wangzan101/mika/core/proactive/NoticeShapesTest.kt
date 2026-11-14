@@ -87,8 +87,23 @@ class NoticeShapesTest {
         assertEquals("张三", a.messages.single().sender)
         // 系统没说是不是群:有会话名就当群
         assertEquals(true, styled("周末爬山群: 张三", "周末爬山群", null, "张三").group)
-        // 系统说了不是群的听系统的
-        assertEquals(false, styled("备注名: 张三", "备注名", false, "张三").group)
+        // 标题里的发言人留着,给人和模型看的那一句带上他
+        assertEquals("张三", a.sender)
+        assertEquals("李四", b.sender)
+        assertEquals("张三: 那句话", a.said)
+        assertNull(styled("周末爬山群", "周末爬山群", true, "张三").sender)
+        // 发言人就是会话名的(以对方的名字当会话名的私聊):不另记
+        assertNull(styled("张三: 张三", "张三", false, "张三").sender)
+        // 系统说不是群、却有会话名:看不出来(老写法只设会话名不另说是群,新写法也能给私聊起会话名),不硬说是私聊
+        val unsure = styled("备注名: 张三", "备注名", false, "张三")
+        assertNull(unsure.group)
+        assertEquals("备注名", unsure.title)
+        assertEquals(false, unsure.titleIsSpeaker)
+        // 群聊却没有会话名:标题是发言人,认不了会话,记上一笔;标题不动
+        val nameless = styled("张三", null, true, "张三")
+        assertEquals("张三", nameless.title)
+        assertTrue(nameless.titleIsSpeaker)
+        assertEquals(true, nameless.group)
         // 私聊:没有会话名,标题就是对方
         val p = styled("张三", null, false, "张三")
         assertEquals("张三", p.title)

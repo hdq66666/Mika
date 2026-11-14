@@ -343,6 +343,24 @@ class ContactPoolTest {
         assertFalse(p.remapTopic("k1", "k3"))
     }
 
+    // 没有会话名的群聊:通知标题是发言人,不是会话。不记联系人——记了的话群里每个人各成一条,还会和同名的私聊混成一个
+    @Test fun aGroupWhoseTitleIsOnlyTheSpeakerIsNotRecorded() {
+        val p = ContactPool()
+        val at = start + 3_600_000L
+        val events = listOf(
+            LearnEvent(1, "g", "com.chat", at, "张三", "明天见", group = true, titleIsSpeaker = true),
+            LearnEvent(2, "p", "com.chat", at, "张三", "在吗", group = false),
+        )
+        val r = p.apply(events, listOf(ContactSignal(listOf(0), ContactType.Group, ContactRelation.Friend),
+            ContactSignal(listOf(1), ContactType.Person, ContactRelation.Friend)), mapOf(0 to setOf("k1"), 1 to setOf("k2")), at + 1, utc)
+        assertEquals(1, r.accepted)
+        assertEquals(1, r.dropped[ContactDrop.NoIdentity])
+        val c = p.all().single()
+        assertEquals(ContactType.Person, c.type)
+        // 群里那条的话题也不连到私聊的这个人上
+        assertEquals(listOf("k2"), c.topics)
+    }
+
     @Test fun topicLinksAreMechanicalBoundedAndPruned() {
         val p = ContactPool()
         p.day(0, ContactRelation.Friend, topics = mapOf(0 to setOf("k1", "k2")))

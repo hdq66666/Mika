@@ -23,7 +23,8 @@ data class NoticeRecord(
     val category: String? = null,
     /**
      * 这句话是谁说的:只在通知自己把「谁」写在正文里、又和会话的名字不是同一个时才有(群里的某个人)。
-     * 由 [NoticeShapes] 按 App 的写法拆出来;拆不出来、私聊、不是聊天的通知都是 null。带会话样式的通知看 [messages] 里各条的发送人。
+     * 由 [NoticeShapes] 按 App 的写法拆出来;拆不出来、私聊、不是聊天的通知都是 null。带会话样式的通知:有会话名时是系统写在标题里的
+     * 那个发言人(最新一条收到的消息的),各条消息的发送人看 [messages]。
      */
     val sender: String? = null,
     /** 这是群聊(true)还是和一个人的私聊(false);看不出来、不是聊天的为 null。同样由 [NoticeShapes] 定。 */
@@ -33,6 +34,11 @@ data class NoticeRecord(
      * 不能拿来认会话。[NoticeShapes] 拿它换掉 [title];没有会话样式、私聊的为 null。
      */
     val conversationTitle: String? = null,
+    /**
+     * 带会话样式的群聊,系统却没给会话名:这时系统把 [title] 写成最新一条消息的发言人,不是会话的名字。
+     * 拿它认会话的话,群里每个人各成一个「会话」,还会和同名的私聊混成一个;所以这种通知不记联系人(见 [ContactPool.apply])。
+     */
+    val titleIsSpeaker: Boolean = false,
     /** 系统说这条通知不出声、不弹出来(重要程度在「默认」以下);不知道时当会出声。见 [LiveUpdates]。 */
     val silent: Boolean = false,
 ) {
