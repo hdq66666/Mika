@@ -189,8 +189,10 @@ class LearnRunnerTest {
     private class MemPurges : LearnPurges {
         /** 写过几次(每写一次就是一次偏好落盘)。 */
         var writes = 0
+        /** 话题那份下一次写上之后要做的事(只做一次):模拟写完这一笔进程就没了。 */
+        var afterTopicWrite: (() -> Unit)? = null
         override var topicPurges: Set<String> = emptySet()
-            set(v) { field = v; writes++ }
+            set(v) { field = v; writes++; afterTopicWrite?.also { afterTopicWrite = null }?.invoke() }
         override var contactPurges: Set<String> = emptySet()
             set(v) { field = v; writes++ }
         override var digestPurges: Set<String> = emptySet()
@@ -963,7 +965,103 @@ class LearnRunnerTest {
         assertTrue(e.purges.contactPurges.isEmpty())
     }
 
-    // 连着并了两回都没存上:记着的两次合并不分先后,补做时一路跟到最后并进去的那个
+    // 一次合并要记到话题、联系人两份上。记完进程就没了(两份文件都还没改):下次读出来两份都补做,联系人上的连接跟着改指
+    @Test fun aMergeRecordedJustBeforeTheProcessDiedIsRedoneOnBothStores() = runTest {
+        class Died : Error("process death")
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.purges.afterTopicWrite = { throw Died() }
+        try {
+            e.runner.mergeTopic(hiking, trails)
+            org.junit.Assert.fail("the injected death should interrupt the merge")
+        } catch (_: Died) {}
+        assertEquals(2, e.store.data.topics.size)
+        assertEquals(listOf(hiking), e.contacts.data.contacts.single().topics)
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf(trails), e.store.data.topics.map { it.id })
+        assertEquals(listOf(trails), e.contacts.data.contacts.single().topics)
+        assertTrue(e.purges.topicPurges.isEmpty())
+        assertTrue(e.purges.contactPurges.isEmpty())
+    }
+
+    // 同一个名字上「删掉」和「并进别的」是后做的算数,没存上、进程没了之后补做也一样:
+    // 先删了「Tea」(兴趣),后把同名的另一个(在买的)并进「Drinks」→「Tea」算并掉的,不在「不再记录」里
+    @Test fun unsavedDeletesAndMergesAreRedoneInTheOrderTheUserMadeThem() = runTest {
+        fun topic(id: String, kind: TopicKind, label: String) = ObservedTopic(id, kind, label, start, start, mapOf("com.shop" to listOf(20_000L)))
+        val tea = TopicPool.fingerprint("Tea")
+        val e = Env(this)
+        e.store.data = TopicPoolData(topics = listOf(
+            topic("k1", TopicKind.Interest, "Tea"), topic("k3", TopicKind.Shopping, "Tea"), topic("k4", TopicKind.Routine, "Drinks")))
+        e.runner.open()
+        e.store.failSave = true
+        e.runner.deleteTopic("k1")
+        e.runner.mergeTopic("k3", "k4")
+        assertEquals(0, e.runner.topicsBlocked.value)
+        e.store.failSave = false
+        newProcess(e).open()
+        assertEquals(listOf("k4"), e.store.data.topics.map { it.id })
+        assertEquals("k4", e.store.data.merged[tea])
+        assertFalse(tea in e.store.data.blocked)
+        // 反过来:先把一个并掉,后把同名的另一个删了 →「Tea」不再记
+        val f = Env(this)
+        f.store.data = TopicPoolData(topics = listOf(
+            topic("k1", TopicKind.Interest, "Tea"), topic("k3", TopicKind.Shopping, "Tea"), topic("k4", TopicKind.Routine, "Drinks")))
+        f.runner.open()
+        f.store.failSave = true
+        f.runner.mergeTopic("k3", "k4")
+        f.runner.deleteTopic("k1")
+        f.store.failSave = false
+        newProcess(f).open()
+        assertEquals(listOf("k4"), f.store.data.topics.map { it.id })
+        assertTrue(f.store.data.merged.isEmpty())
+        assertTrue(tea in f.store.data.blocked)
+    }
+
+    // 两个同名的话题先后并进两个不同的目标:名字算在后并的那个目标上,正着做、反着做补出来都得对
+    @Test fun theLaterOfTwoSameNameMergesWinsAfterAReplay() = runTest {
+        fun topic(id: String, kind: TopicKind, label: String) = ObservedTopic(id, kind, label, start, start, mapOf("com.shop" to listOf(20_000L)))
+        for (reverse in listOf(false, true)) {
+            val e = Env(this)
+            e.store.data = TopicPoolData(topics = listOf(
+                topic("k1", TopicKind.Interest, "Tea"), topic("k2", TopicKind.Interest, "Coffee"),
+                topic("k3", TopicKind.Shopping, "Tea"), topic("k4", TopicKind.Shopping, "Drinks")))
+            e.runner.open()
+            e.store.failSave = true
+            val ops = listOf("k1" to "k2", "k3" to "k4").let { if (reverse) it.reversed() else it }
+            ops.forEach { (from, into) -> e.runner.mergeTopic(from, into) }
+            e.store.failSave = false
+            newProcess(e).open()
+            assertEquals("reverse=$reverse", ops.last().second, e.store.data.merged[TopicPool.fingerprint("Tea")])
+        }
+    }
+
+    // 目标是刚归纳出来、还没存上的话题(存储满了之类):这时不并。记号里只有两个 id,进程一没目标不在文件里,
+    // 这次合并补不回来;并了的话,用户看到并好了,重启后并掉的那个却回来了、目标没了
+    @Test fun aMergeIntoATopicThatIsNotSavedYetIsNotDone() = runTest {
+        val e = Env(this)
+        e.model.reply = { newTopic("n1") }
+        e.post(count = 12)
+        val hiking = e.store.data.topics.single().id
+        e.store.failSave = true
+        e.model.reply = { newTopic("n1", label = "Trails") }
+        e.post(count = 12)
+        val trails = e.runner.topics.value.single { it.label == "Trails" }.id
+        assertEquals(listOf(hiking), e.store.data.topics.map { it.id })
+        e.runner.mergeTopic(hiking, trails)
+        // 没并:两个都还在,什么都没记
+        assertEquals(setOf(hiking, trails), e.runner.topics.value.map { it.id }.toSet())
+        assertTrue(e.purges.topicPurges.isEmpty())
+        assertTrue(e.purges.contactPurges.isEmpty())
+        // 存得上了:先把话题池存上,再并
+        e.store.failSave = false
+        e.runner.mergeTopic(hiking, trails)
+        assertEquals(listOf(trails), e.store.data.topics.map { it.id })
+        assertEquals(listOf(trails), e.runner.topics.value.map { it.id })
+        assertTrue(e.purges.topicPurges.isEmpty())
+    }
+
+    // 连着并了两回都没存上:补做时照先后来,一路跟到最后并进去的那个
     @Test fun unsavedMergesInARowEndUpOnTheLastTopic() = runTest {
         val e = Env(this)
         val (hiking, trails) = hikingAndTrails(e)

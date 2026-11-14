@@ -176,12 +176,25 @@ interface DigestStore {
  * [LearnRunner.PURGE_SENSITIVE],以及单删的那些(只有编号、日子,没有内容;话题和句子的编号是随机的,
  * 联系人的是从 App 和会话名算出来的哈希——偏好文件不加密,这一项存上之前会在里面待一会儿)。记这一笔是尽力而为:
  * 存盘写不下去多半是存储满了,那时偏好多半也写不下去。
+ *
+ * 话题、联系人这两份是按记下的先后排着的(集合的遍历顺序就是先后),补做时照这个先后做:同一个话题名上,
+ * 「删掉」和「并进别的」是后做的算数,合并的目标也得先于并进它的那一步存在。实现要把先后一起存下来。
  */
 interface LearnPurges {
-    /** 话题池上还没落盘的。 */
+    /** 话题池上还没落盘的,按记下的先后。 */
     var topicPurges: Set<String>
-    /** 联系人上还没落盘的。 */
+    /** 联系人上还没落盘的,按记下的先后。 */
     var contactPurges: Set<String>
+
+    /**
+     * 同一个记号记到话题、联系人两份的末尾(一次合并两份都要改)。正式的实现([ProactivePrefs])一次落盘:
+     * 分两次写的话,中间进程没了只记上一半,补做时话题并了、联系人上的连接没跟上。
+     * 这里的默认写法分两次(先联系人),只给测试里的替身用。
+     */
+    fun addToTopicsAndContacts(mark: String) {
+        contactPurges = contactPurges - mark + mark
+        topicPurges = topicPurges - mark + mark
+    }
     /** 分段归纳的句子和各级归纳上还没落盘的。 */
     var digestPurges: Set<String>
     /** 通知原文上还没落盘的:要去掉其全部原文的 App 包名。 */
@@ -251,6 +264,8 @@ internal class LearnRunner(
     private var holdUntilMs = 0L
     /** 已经在内存里做掉、还没存上的补删(见 [purge]):存上的那一刻从记着的里划掉。 */
     private var topicPurgesApplied: Set<String> = emptySet()
+    /** 文件里有的话题的 id(读出来时、每次存上时记下):内存里多出来的(刚归纳出来、还没存上的)不在里面。 */
+    private var savedTopics: Set<String> = emptySet()
     private var contactPurgesApplied: Set<String> = emptySet()
     private var digestPurgesApplied: Set<String> = emptySet()
     private var journalPurgesApplied: Set<String> = emptySet()
@@ -489,7 +504,7 @@ internal class LearnRunner(
         if (p.delete(id)) {
             // 先记下来再存:没存上、进程又没了的,下次读出来时补做(见 [LearnPurges])
             val mark = MARK_TOPIC + id
-            purges.topicPurges = purges.topicPurges + mark
+            purges.topicPurges = purges.topicPurges - mark + mark
             topicPurgesApplied = topicPurgesApplied + mark
             topicsGone(setOf(id))
             save(p)
@@ -501,50 +516,47 @@ internal class LearnRunner(
      * 把话题 [fromId] 并进 [intoId](用户在话题页上做的;规则见 [TopicPool.merge]):事件上、联系人上指着 [fromId] 的改指 [intoId]。
      * 不走删除那条路:并掉的名字不进「不再记录」,连接也不丢。
      *
-     * 和删除一样先记下来再存(见 [LearnPurges]),存上了才划掉;没存上、进程又没了的,下次读出来时补做:
+     * 和删除一样先记下来再存(见 [LearnPurges]),存上了才划掉;没存上、进程又没了的,下次读出来时照记下的先后补做:
      * - 话题那份:不补做的话,文件里两个话题都还在。用户并完接着把并好的那个删了(删除是记着的、会补做),
      *   补做时文件里没有这次合并,并掉的那个就带着它的证据回来了,名字也不在「不再记录」里。
      * - 联系人那份:这会儿读不出来、或改了没存上的,文件里连着的还是并掉的那个 id;等话题那份存上了,
      *   下次整理就把这些连接当成指着空处的去掉了。
+     * 这一笔两份一次记上([LearnPurges.addToTopicsAndContacts]):只记上话题那一半的话,补做时联系人上的连接就丢了。
+     *
+     * 记号里只有两个 id,补做时两个话题都得在文件里。有一个还不在文件里(刚归纳出来、没存上的)时先存一次,还存不上就不并——
+     * 并了也记不住:进程一没,目标不在文件里,这次合并补不回来,并掉的那个又回来了。合并分不开,存不下的时候宁可不做。
+     *
      * 先存联系人再存话题:中途进程没了,联系人上连着的是还在的那个话题。
      */
     fun mergeTopic(fromId: String, intoId: String) {
         val p = loadedPool() ?: return
+        if (p[fromId] == null || p[intoId] == null || fromId == intoId) return
+        if ((fromId !in savedTopics || intoId !in savedTopics) && !save(p)) {
+            log("learn merge not done: topic not saved")
+            return
+        }
         if (!p.merge(fromId, intoId)) return
         val mark = MARK_MERGE + fromId + MERGE_INTO + intoId
-        purges.topicPurges = purges.topicPurges + mark
+        purges.addToTopicsAndContacts(mark)
         topicPurgesApplied = topicPurgesApplied + mark
         buffer.remapTopic(fromId, intoId)
         val c = contactPool
         if (c == null) {
-            // 联系人还没读出来:记下来再读;读出来的那一刻把记着的(连同这一项)做掉,读不出来就留到读得出来时
-            purges.contactPurges = purges.contactPurges + mark
+            // 联系人还没读出来:读出来的那一刻把记着的(连同这一项)做掉;读不出来就留到读得出来时
             loadedContacts()
-        } else if (c.remapTopic(fromId, intoId)) {
-            purges.contactPurges = purges.contactPurges + mark
+        } else {
+            c.remapTopic(fromId, intoId)
             contactPurgesApplied = contactPurgesApplied + mark
             saveContacts(c)
         }
         save(p)
     }
 
-    /**
-     * [what] 里记着的合并:并掉的话题 id → 并进去的 id。连着并了几回的(甲并进乙、乙又并进丙)直接指到最后那个:
-     * 记号是一个集合,不分先后,照着做的时候乙可能已经不在了。
-     */
-    private fun mergesIn(what: Set<String>): List<Pair<String, String>> {
-        val into = HashMap<String, String>()
-        for (w in what) {
-            if (!w.startsWith(MARK_MERGE)) continue
-            val ids = w.removePrefix(MARK_MERGE).split(MERGE_INTO)
-            if (ids.size == 2 && ids[0].isNotEmpty() && ids[1].isNotEmpty()) into[ids[0]] = ids[1]
-        }
-        return into.keys.map { from ->
-            var last = into.getValue(from)
-            // 最多跟这么多步:记号坏了绕成圈的也停得下来
-            for (step in 0 until into.size) last = into[last] ?: break
-            from to last
-        }
+    /** 记着的一次合并:并掉的话题 id、并进去的 id;不是合并的记号、写得不对的为 null。 */
+    private fun mergeIn(mark: String): Pair<String, String>? {
+        if (!mark.startsWith(MARK_MERGE)) return null
+        val ids = mark.removePrefix(MARK_MERGE).split(MERGE_INTO)
+        return if (ids.size == 2 && ids[0].isNotEmpty() && ids[1].isNotEmpty()) ids[0] to ids[1] else null
     }
 
     /**
@@ -653,8 +665,7 @@ internal class LearnRunner(
             // 里面有留两年的月归纳;记下来,读得出来时补做(见 loadedDigest)
             digestRemove(setOf(what), stopRequests = true)
         }
-        purges.topicPurges = purges.topicPurges + what
-        purges.contactPurges = purges.contactPurges + what
+        purges.addToTopicsAndContacts(what)
         // 这一次才读出来的,读出来的那一刻已经把记着的(连同这一项)做掉了
         val hadTopics = pool != null
         val p = loadedPool()
@@ -668,12 +679,13 @@ internal class LearnRunner(
     private fun purgeTopics(p: TopicPool, what: Set<String>) {
         if (what.isEmpty()) return
         val gone = HashSet<String>()
-        // 没存上的合并先补做:之后才删、才清的可能就是并好的那个(并进过它的名字要跟着进「不再记录」)。
-        // 已经存上了的再做一遍什么都不会变:并掉的那个 id 不在了,id 也不会再发给别的话题
-        for ((from, into) in mergesIn(what)) p.merge(from, into)
+        // 照记下的先后做(见 [LearnPurges]):并完才删的,删的是并好的那个,并进过它的名字要跟着进「不再记录」;
+        // 先删了一个名字、后来又把同名的另一个并进别的,这个名字算并掉的。已经存上了的再做一遍什么都不会变:
+        // 并掉、删掉的那个 id 不在了,id 也不会再发给别的话题
         for (w in what) when {
             w == MARK_ALL -> { gone += p.all().map { it.id }; p.clear() }
             w == PURGE_SENSITIVE -> gone += p.deleteSensitive()
+            w.startsWith(MARK_MERGE) -> mergeIn(w)?.let { (from, into) -> p.merge(from, into) }
             w.startsWith(MARK_TOPIC) -> w.removePrefix(MARK_TOPIC).let { if (p.delete(it)) gone += it }
             // 别的记号不是话题池的事(也不能当包名去清)
             w.startsWith(":") -> {}
@@ -686,11 +698,11 @@ internal class LearnRunner(
 
     private fun purgeContacts(c: ContactPool, what: Set<String>) {
         if (what.isEmpty()) return
-        // 没存上的合并先补做:连着并掉的那个话题的,改连并进去的那个
-        for ((from, into) in mergesIn(what)) c.remapTopic(from, into)
+        // 照记下的先后做。记着的合并:连着并掉的那个话题的,改连并进去的那个
         for (w in what) when {
             w == MARK_ALL -> c.clear()
             w == PURGE_SENSITIVE -> c.deleteSensitive()
+            w.startsWith(MARK_MERGE) -> mergeIn(w)?.let { (from, into) -> c.remapTopic(from, into) }
             // 不在了也要记进「不再记录」(见 [ContactPool.forget])
             w.startsWith(MARK_CONTACT) -> c.forget(w.removePrefix(MARK_CONTACT))
             w.startsWith(":") -> {}
@@ -1641,6 +1653,7 @@ internal class LearnRunner(
         return try {
             TopicPool(store.load()).also {
                 pool = it
+                savedTopics = it.all().mapTo(HashSet()) { t -> t.id }
                 topicsFlow.value = it.all()
                 topicsBlockedFlow.value = it.blockedCount
                 purgeTopics(it, purges.topicPurges)
@@ -1697,6 +1710,7 @@ internal class LearnRunner(
         topicsBlockedFlow.value = p.blockedCount
         return try {
             store.save(p.data())
+            savedTopics = p.all().mapTo(HashSet()) { it.id }
             // 做过的补删这下落盘了
             if (topicPurgesApplied.isNotEmpty()) {
                 purges.topicPurges = purges.topicPurges - topicPurgesApplied
