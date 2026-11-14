@@ -84,8 +84,8 @@ class SettingsScreenTest {
     fun homeRowsOpenTheirPages() {
         val opened = mutableListOf<String>()
         home(opened = opened)
-        // 「主动能力(实验)」在「微信」和「任务运行」之间
-        for (t in listOf("模型", "手机操作", "微信", "主动能力（实验）", "任务运行", "悬浮胶囊", "语言与外观", "通知", "记忆与数据", "应用访问", "高级与其他", "关于 Mika")) {
+        // 「主动能力」在「微信」和「任务运行」之间
+        for (t in listOf("模型", "手机操作", "微信", "主动能力", "任务运行", "悬浮胶囊", "语言与外观", "通知", "记忆与数据", "应用访问", "高级与其他", "关于 Mika")) {
             scrollTo(t)
             compose.onNodeWithText(t).performClick()
         }

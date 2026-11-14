@@ -165,7 +165,7 @@ fun SettingsScreen(
         ),
     )
     // 开发者选项只在调试版和性能测试版里列出:发布版的各开关按评测结果统一定默认值。
-    // 主动能力(实验)不在里面:入口在设置首页,每个版本都有,默认关着
+    // 主动能力不在里面:入口在设置首页,每个版本都有,默认关着
     val showDeveloper = com.wangzan101.mika.record.DetailedTraces.supportedBuild
     val toHome = { page = SettingsPage.Home }
     val toAdvanced = { page = SettingsPage.Advanced }
@@ -366,7 +366,7 @@ fun SettingsContent(
     wechatState: WechatConnectionState = WechatConnectionState.NeedsBinding,
     wechatBound: Boolean = false,
     onOpenWechat: () -> Unit = {},
-    /** 「主动能力(实验)」的入口,在「微信」和「任务运行」之间。 */
+    /** 「主动能力」的入口,在「微信」和「任务运行」之间。 */
     onOpenProactive: () -> Unit = {},
     onOpenAppAccess: () -> Unit = {},
     onOpenDuringWork: () -> Unit = {},
