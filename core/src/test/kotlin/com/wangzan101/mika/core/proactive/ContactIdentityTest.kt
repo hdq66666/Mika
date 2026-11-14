@@ -41,6 +41,13 @@ class ContactIdentityTest {
         val ids = listOf("周末爬山群（1,234）", "周末爬山群（1,236）", "周末爬山群 (987)", "周末爬山群(99+)", "周末爬山群").map { id("k", it, s) }
         assertEquals(1, ids.toSet().size)
         assertEquals("周末爬山群（1,234）", ContactIdentity.displayName("周末爬山群（1,234）"))
+        // 名字加上那个数刚好超过显示名的上限(括号被截掉一半)时也一样认
+        val long = "群".repeat(LearnTuning.CONTACT_NAME_MAX - 4)
+        assertEquals(id("k", long, s), id("k", "$long（1,234）", s))
+        assertEquals(id("k", long, s), id("k", "$long（1,301）", s))
+        // 名字本身就比上限长的:只看开头那一段,后面带不带数都一样
+        val longer = "群".repeat(LearnTuning.CONTACT_NAME_MAX + 10)
+        assertEquals(id("k", longer, s), id("k", "$longer（7）", s))
         // 存着的显示名(带着那个数)算出来的也是同一个
         assertEquals(ids.first(), ContactIdentity.ofStored(pkg, "周末爬山群（1,236）"))
         // 不在结尾的、不是纯数的括号还是名字的一部分

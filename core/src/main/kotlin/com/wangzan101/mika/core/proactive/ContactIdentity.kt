@@ -56,12 +56,18 @@ object ContactIdentity {
     private val TRAILING_COUNT = Regex("\\s*[(（]\\s*[0-9][0-9,，.]*\\+?\\s*[)）]$")
 
     /**
-     * 认会话用的名字:[conversationName] 再去掉结尾括号里的数,比较时不分大小写、全半角、空白。
+     * 认会话用的名字:和 [conversationName] 一样清洗、去掉未读条数,再去掉结尾括号里的数,然后才截断;比较时不分大小写、全半角、空白。
      * 那个数留在显示名里(它可能就是名字的一部分,「项目群(2)」),只是不拿它分会话:带着它认的话,数一变同一个群就成了另一个联系人。
      * 代价:「项目群(2)」和「项目群(3)」会并成一个。
+     * 先去数、后截断:反过来的话,名字加上那个数刚好超过上限时,括号被截掉一半就认不出来了,数一变还是另一个联系人。
+     * 存着的显示名是先带着那个数截断的:名字连同那个数都没超过上限时,从它算出来的和从通知算出来的一样;名字本身就超过上限的也一样
+     * (截出来的是同一段开头)。只有夹在中间的(名字没超、加上数才超)不一样:显示名里的括号被截掉了一半。以前存下来的这种条目
+     * 换身份时并不到新通知的那一条上,留着等它淡忘。
      */
-    internal fun identityName(title: String): String =
-        TopicPool.normalize(TRAILING_COUNT.replace(conversationName(title), ""))
+    internal fun identityName(title: String): String {
+        val full = withoutUnreadCount(NoticeFilter.clean(title, 1_000))
+        return TopicPool.normalize(NoticeFilter.cap(TRAILING_COUNT.replace(full, ""), LearnTuning.CONTACT_NAME_MAX).trim())
+    }
 
     /** 算不出身份(要看会话名的策略下会话名是空的)为 null。 */
     fun of(packageName: String, key: String, title: String, strategy: ContactIdStrategy = LearnTuning.CONTACT_ID): Identity? {
