@@ -170,7 +170,9 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
             // 又在列表里:留在页面上,却再也不会动,也没有任何说明。用户不要它可以再删一次,这回按会话名记,换了键也挡得住
             if (now in contacts) return@forEachIndexed
             val before = ContactIdentity.of(e.packageName, e.key, e.title, ContactIdStrategy.KeyAndTitle)?.id
-            if (before != null && before in blocked) { block(now); carried = true }
+            // 换成现在的 id,不是再添一个:旧的那个以后用不上了(现在的 id 换了通知键也挡得住),两个都留着的话,
+            // 一次删除占名单里两个位置,名单满着时换一个就挤掉一个别的、还没换过来的删除
+            if (before != null && before in blocked) { blocked.remove(before); block(now); carried = true }
         }
         // 显示名用这批里这个会话最近一条能给的;没有的话沿用旧的;第一次见就给不出的不记
         fun nameOf(id: String): String? = events.indices.filter { ids[it]?.id == id }.sortedBy { events[it].postedAtMs }
@@ -385,7 +387,8 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
                 typeVotes = votes(a.typeVotes, b.typeVotes),
                 relationVotes = votes(a.relationVotes, b.relationVotes),
                 days = addDays(a.days, b.days),
-                topics = (older.topics + newer.topics).distinct().takeLast(LearnTuning.CONTACT_TOPICS),
+                // 超出上限时留最近的:两边都连着的话题按较新那一条里的位置算(和平时刷新连接的规矩一样)
+                topics = (older.topics - newer.topics.toSet() + newer.topics).distinct().takeLast(LearnTuning.CONTACT_TOPICS),
                 userRelation = newer.userRelation ?: older.userRelation,
             )
         }

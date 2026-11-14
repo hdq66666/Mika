@@ -109,14 +109,14 @@ class ContactPoolTest {
     // 「不再记录」的名单里是按以前的算法记的 id:换了算法也不能让删掉的联系人回来
     @Test fun theBlockListSurvivesTheChangeOfIdentity() {
         val key = "0|com.chat|7|null|1"
-        // 以前删过的(联系人已经不在了,只剩名单里的旧 id):同一个键、同一个名字再来,认得出来,现在的 id 也记进名单
+        // 以前删过的(联系人已经不在了,只剩名单里的旧 id):同一个键、同一个名字再来,认得出来,名单里换成现在的 id
         val p = ContactPool(ContactPoolData(blocked = listOf(oldId(key, "张三"))))
         val first = p.apply(listOf(LearnEvent(1, key, "com.chat", start, "张三", "text", group = false)),
             listOf(ContactSignal(listOf(0), ContactType.Person, ContactRelation.Unknown)), emptyMap(), start + 1, utc)
         assertTrue(p.all().isEmpty())
-        // 名单里多了现在的 id:算改动(调用方据此存盘),存下来的名单里两个 id 都在
+        // 名单变了:算改动(调用方据此存盘)。存下来的名单里是现在的 id,旧的那个换掉了(一次删除只占一个位置)
         assertTrue(first.changed)
-        assertEquals(setOf(oldId(key, "张三"), nowId("张三")), p.data().blocked.toSet())
+        assertEquals(listOf(nowId("张三")), p.data().blocked)
         // 再来一次没有新的可记:不算改动
         assertFalse(p.apply(listOf(LearnEvent(2, key, "com.chat", start + 5, "张三", "text", group = false)),
             listOf(ContactSignal(listOf(0), ContactType.Person, ContactRelation.Unknown)), emptyMap(), start + 6, utc).changed)
@@ -175,6 +175,31 @@ class ContactPoolTest {
         // 还在的照常删
         assertTrue(p.forget(nowId("别的群")))
         assertTrue(p.all().isEmpty())
+    }
+
+    // 「不再记录」的名单满着(都是以前的 id)。换成现在的 id 是替换,不是再添一个:不然换一个就挤掉一个别的、还没换过来的删除,
+    // 用户一次都没多删,删掉的联系人却回来了。页面上的个数也还是那么多个会话
+    @Test fun carryingABlockedIdentityOverDoesNotPushOutAnotherDeletedContact() {
+        val cap = LearnTuning.CONTACT_BLOCKED_CAP
+        val p = ContactPool(ContactPoolData(blocked = (0 until cap).map { oldId("key-$it", "联系人$it") }))
+        p.seen(0, "key-${cap - 1}", "联系人${cap - 1}", group = false)
+        assertTrue(p.all().isEmpty())
+        assertEquals(cap, p.blockedCount)
+        p.seen(0, "key-0", "联系人0", group = false)
+        assertTrue(p.all().isEmpty())
+        assertEquals(cap, p.blockedCount)
+        assertTrue(nowId("联系人0") in p.data().blocked)
+        assertFalse(oldId("key-0", "联系人0") in p.data().blocked)
+    }
+
+    // 以前的几条并成一条时,连着的话题超出上限留最近的:较新那一条也连着的话题不能因为在较旧那一条里排得靠前就被挤掉
+    @Test fun mergingStoredDuplicatesKeepsTheTopicsTheNewerOneStillLinks() {
+        val cap = LearnTuning.CONTACT_TOPICS
+        val older = ObservedContact(oldId("k1", "工作群"), "com.chat", "工作群", 1, 100, days = listOf(1), topics = (1..cap).map { "topic$it" })
+        val newer = ObservedContact(oldId("k2", "工作群"), "com.chat", "工作群", 101, 200, days = listOf(2), topics = listOf("topic1", "topic${cap + 1}"))
+        val p = ContactPool(ContactPoolData(contacts = listOf(older, newer)))
+        assertTrue(p.adoptIdentities())
+        assertEquals((3..cap).map { "topic$it" } + listOf("topic1", "topic${cap + 1}"), p.all().single().topics)
     }
 
     // 名字是空的、算不出现在的身份的旧条目:原样留着(等它淡忘),不丢也不乱并
