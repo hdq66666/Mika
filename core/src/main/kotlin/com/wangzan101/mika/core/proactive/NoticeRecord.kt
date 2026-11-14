@@ -33,6 +33,8 @@ data class NoticeRecord(
      * 不能拿来认会话。[NoticeShapes] 拿它换掉 [title];没有会话样式、私聊的为 null。
      */
     val conversationTitle: String? = null,
+    /** 系统说这条通知不出声、不弹出来(重要程度在「默认」以下);不知道时当会出声。见 [LiveUpdates]。 */
+    val silent: Boolean = false,
 ) {
     /** 给人和模型看的那一句:群里的带上是谁说的(「张三: 明天见」),别的就是正文。 */
     val said: String get() = if (sender.isNullOrBlank()) text else "$sender: $text"

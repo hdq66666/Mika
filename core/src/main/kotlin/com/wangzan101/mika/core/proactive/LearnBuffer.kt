@@ -122,6 +122,17 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
 
     val pendingCount: Int get() = events.count { it.state == LearnEvent.State.Pending }
 
+    /**
+     * 这个键其实是一条被反复重发的状态显示(见 [LiveUpdates]):它从 [sinceMs] 起收进来、还没发出去归纳的那几条去掉。
+     * 更早的、正在发的那一批不动。有去掉的返回 true。
+     */
+    fun forgetKey(key: String, sinceMs: Long): Boolean {
+        // 只去掉这一阵重发收进来的:很多 App 所有推送共用一个通知键,同一个键上更早的那条正常通知不能跟着丢
+        val gone = events.removeAll { it.key == key && it.state == LearnEvent.State.Pending && it.postedAtMs >= sinceMs }
+        if (gone) publish()
+        return gone
+    }
+
     /** 开一批:这个 App 最旧的待归纳的最多 [LearnTuning.BATCH_MAX] 条,标成在发。 */
     fun begin(packageName: String): List<LearnEvent> {
         check(events.none { it.state == LearnEvent.State.Sending }) { "a batch is already in flight" }

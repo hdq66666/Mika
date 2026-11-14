@@ -374,6 +374,15 @@ internal class LearnRunner(
         if (buffer.capture(record, newMessages)) bump(record.packageName) { it.copy(captured = it.captured + 1) }
     }
 
+    /**
+     * 这个通知键其实是一条被反复重发的状态显示(导航播报之类,见 [LiveUpdates]):它从 [sinceMs] 起(这一阵重发)收进来、
+     * 还没归纳的那几条去掉,通知原文里的也去掉。同一个键上更早的不动——很多 App 所有推送共用一个通知键。
+     */
+    fun dropLive(key: String, sinceMs: Long) {
+        buffer.forgetKey(key, sinceMs)
+        if (on() && digest()) loadedJournal()?.let { if (it.removeKey(com.wangzan101.mika.core.proactive.NoticeDedup.idOf(key), sinceMs)) saveJournal() }
+    }
+
     /** 记进通知日志;攒够 [JOURNAL_FLUSH_EVERY] 段没存的就存一次(进程在两次存盘之间没了,最多丢这么多段,或上次锁屏之后的)。 */
     private fun record(record: NoticeRecord) {
         val j = loadedJournal() ?: return

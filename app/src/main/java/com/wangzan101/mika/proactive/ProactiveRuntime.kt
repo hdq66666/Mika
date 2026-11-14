@@ -18,6 +18,7 @@ import com.wangzan101.mika.R
 import com.wangzan101.mika.core.proactive.CatchUp
 import com.wangzan101.mika.core.proactive.GrantResult
 import com.wangzan101.mika.core.proactive.ListenerGrant
+import com.wangzan101.mika.core.proactive.LiveUpdates
 import com.wangzan101.mika.core.proactive.NoticeDedup
 import com.wangzan101.mika.core.proactive.NoticeFilter
 import com.wangzan101.mika.core.proactive.NoticeHints
@@ -91,6 +92,8 @@ class ProactiveRuntime(
 
     val inbox = NoticeInbox()
     private val dedup: NoticeDedup = NoticeDedup.decode(prefs.dedup)
+    /** 被 App 反复重发的状态显示(导航播报之类)认出来就不收;只在内存里。 */
+    private val live = LiveUpdates()
     private val policy = ProactiveLockPolicy(prefs.lastLockedAtMs)
 
     private val _enabled = MutableStateFlow(false)
@@ -225,6 +228,7 @@ class ProactiveRuntime(
                 triage.clear()
                 learn.clear()
                 dedup.clear()
+                live.clear()
                 prefs.clearDedup()
             }
         }
@@ -559,7 +563,7 @@ class ProactiveRuntime(
     private fun gatedRecord(sbn: StatusBarNotification): NoticeRecord? {
         val pkg = sbn.packageName ?: return null
         if (!BlockedApps.readable(pkg, allowed.current(), access())) return null
-        return NoticeMapper.read(sbn)?.toRecord()
+        return NoticeMapper.read(sbn)?.copy(importance = service?.importanceOf(sbn.key))?.toRecord()
     }
 
     private fun admit(raw: NoticeRecord) {
@@ -567,6 +571,19 @@ class ProactiveRuntime(
         // 清洗之后按 App 的写法把会话、说话的人、那句话拆开(QQ、微信;见 [NoticeShapes]),后面都用拆好的
         val r = NoticeShapes.apply(NoticeFilter.sanitize(raw))
         if (!BlockedApps.admits(r, allowed.current(), access())) return
+        // 被 App 一遍遍重发的状态显示(导航播报之类)不收;刚认出来时,它前面收进来的那几条也去掉(见 [LiveUpdates])
+        when (live.observe(r)) {
+            LiveUpdates.Verdict.Normal -> {}
+            LiveUpdates.Verdict.Live -> return
+            LiveUpdates.Verdict.BecameLive -> {
+                // 只记是哪个 App、出不出声,不记内容
+                Log.i(TAG, "status display, not taken: ${r.packageName} silent=${r.silent}")
+                hintBoard.dismissed(r.key)
+                inbox.remove(r.key)
+                learn.dropLive(r.key, r.postedAtMs - LiveUpdates.WINDOW_MS)
+                return
+            }
+        }
         val admitted = dedup.admit(r) ?: return
         prefs.dedup = dedup.encode()
         inbox.add(r)

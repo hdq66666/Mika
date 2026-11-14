@@ -42,6 +42,15 @@ class RawNoticeTest {
         assertEquals(null, plain.group)
     }
 
+    // 重要程度在「默认」以下的是不出声的;拿不到重要程度时当会出声
+    @Test fun lowImportanceMeansSilent() {
+        assertFalse(raw.toRecord().silent)
+        assertTrue(raw.copy(importance = 2).toRecord().silent)
+        assertTrue(raw.copy(importance = 1).toRecord().silent)
+        assertFalse(raw.copy(importance = 3).toRecord().silent)
+        assertFalse(raw.copy(importance = 4).toRecord().silent)
+    }
+
     @Test fun conversationFromStyleOrMessages() {
         assertFalse(raw.toRecord().conversation)
         assertTrue(raw.copy(messagingStyle = true).toRecord().conversation)

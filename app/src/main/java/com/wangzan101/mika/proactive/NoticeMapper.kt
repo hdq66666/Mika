@@ -26,6 +26,8 @@ data class RawNotice(
     val conversationTitle: String? = null,
     /** 会话样式里系统说的「这是不是群聊」;没说为 null。 */
     val groupConversation: Boolean? = null,
+    /** 系统给这条通知排的重要程度(NotificationManager.IMPORTANCE_*);拿不到为 null。 */
+    val importance: Int? = null,
 ) {
     /** 正文优先取展开后的长文本,没有再取一行的正文;有会话样式或带消息列表的算会话。 */
     fun toRecord(): NoticeRecord = NoticeRecord(
@@ -44,7 +46,14 @@ data class RawNotice(
         // 只有带会话样式的才信这两项:别的通知里这两个键没有约定的意思
         group = groupConversation.takeIf { messagingStyle || messages.isNotEmpty() },
         conversationTitle = conversationTitle?.takeIf { messagingStyle || messages.isNotEmpty() },
+        // 「默认」以下(低、最低)是不出声的;拿不到重要程度时当会出声
+        silent = importance != null && importance < IMPORTANCE_DEFAULT,
     )
+
+    private companion object {
+        /** NotificationManager.IMPORTANCE_DEFAULT。 */
+        const val IMPORTANCE_DEFAULT = 3
+    }
 }
 
 /**

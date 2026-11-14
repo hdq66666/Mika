@@ -1313,6 +1313,27 @@ class LearnRunnerTest {
         for (left in listOf(e.purges.topicPurges, e.purges.contactPurges, e.purges.journalPurges, e.purges.digestPurges)) assertTrue(left.toString(), left.isEmpty())
     }
 
+    // 一个通知键被认成反复重发的状态显示(导航播报之类):它刚收进来、还没归纳的那几条去掉,通知原文里的也去掉;别的键不动
+    @Test fun aKeyRecognisedAsAStatusDisplayLosesWhatItJustAdded() = runTest {
+        val e = Env(this)
+        e.digest = true
+        // 同一个键上一小时前的一条正常通知(很多 App 所有推送共用一个通知键):不能跟着丢
+        e.runner.capture(NoticeRecord("nav", "com.maps", e.now(), "常去的地方有新的评价", "点开看看"))
+        wait(3_600_000L)
+        val burst = e.now()
+        repeat(3) { i -> e.runner.capture(NoticeRecord("nav", "com.maps", burst + i * 2_000L, "${300 - i * 10} 米后右转", "某某路")) }
+        e.runner.capture(NoticeRecord("promo", "com.maps", burst + 9, "周边优惠", "满减券到账"))
+        runCurrent()
+        assertEquals(5, e.runner.state.value.journal)
+        e.runner.dropLive("nav", burst + 6_000L - 60_000L)
+        assertEquals(listOf("常去的地方有新的评价", "周边优惠"), e.journal.data!!.entries.map { it.title })
+        assertEquals(2, e.runner.state.value.journal)
+        // 没有这个键的东西时什么都不做
+        val saves = e.journal.saves
+        e.runner.dropLive("nothing", 0)
+        assertEquals(saves, e.journal.saves)
+    }
+
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)
     @Test fun journalFollowsEveryPurgePath() = runTest {
         fun Env.seed(): Env {
