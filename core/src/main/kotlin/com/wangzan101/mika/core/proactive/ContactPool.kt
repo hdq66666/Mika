@@ -240,6 +240,17 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
         return changed
     }
 
+    /** 话题 [from] 被用户并进了 [into]:连着它的改成连着那一个(留在原来的位置;两个都连着的只留一个)。有改动返回 true。 */
+    fun remapTopic(from: String, into: String): Boolean {
+        var changed = false
+        for (c in contacts.values.toList()) {
+            if (from !in c.topics) continue
+            contacts[c.id] = c.copy(topics = c.topics.map { if (it == from) into else it }.distinct())
+            changed = true
+        }
+        return changed
+    }
+
     /** 话题被删了:联系人上不再连着它。有改动返回 true。 */
     fun forgetTopics(ids: Set<String>): Boolean = ids.isNotEmpty() && forgetTopicsWhere { it in ids }
 

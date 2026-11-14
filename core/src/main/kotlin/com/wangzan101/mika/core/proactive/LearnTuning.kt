@@ -87,6 +87,8 @@ object LearnTuning {
     const val CONTACT_CAP = 300
     /** 删掉后「不再记录」的话题名最多记多少个(多了丢最早的)。 */
     const val TOPIC_BLOCKED_CAP = 500
+    /** 并掉的话题名最多记多少个(多了丢最早的;见 [TopicPool.merge])。 */
+    const val TOPIC_MERGED_CAP = 500
     /** 「不再记录」的身份 id 最多记多少个(多了丢最早的)。 */
     const val CONTACT_BLOCKED_CAP = 500
 

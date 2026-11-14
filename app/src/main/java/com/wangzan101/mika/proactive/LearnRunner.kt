@@ -493,6 +493,20 @@ internal class LearnRunner(
     }
 
     /**
+     * 把话题 [fromId] 并进 [intoId](用户在话题页上做的;规则见 [TopicPool.merge]):事件上、联系人上指着 [fromId] 的改指 [intoId]。
+     * 不走删除那条路:并掉的名字不进「不再记录」,连接也不丢,不记待删。
+     * 先存联系人再存话题:中途进程没了,联系人上连着的是还在的那个话题;反过来的话连着的是已经没了的,下次整理时连接就丢了。
+     * 话题那份没存上的,内存里已经并了,下次有改动时一起存;进程先没了的话两个话题都还在,用户再并一次。
+     */
+    fun mergeTopic(fromId: String, intoId: String) {
+        val p = loadedPool() ?: return
+        if (!p.merge(fromId, intoId)) return
+        buffer.remapTopic(fromId, intoId)
+        (contactPool ?: loadedContacts())?.let { if (it.remapTopic(fromId, intoId)) saveContacts(it) }
+        save(p)
+    }
+
+    /**
      * 清空全部:话题和联系人(联系人不记进「不再记录」,是重来)。哪一份读不出来,就把它的文件整份删掉:
      * 清空不能因为读不出来就什么都没做(联系人那份这样删时,「不再记录」的名单也没了:读不出来,留不住)。
      * 读得出来的照常清、存,另存的旧文件一并删。

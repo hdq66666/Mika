@@ -288,6 +288,24 @@ class ContactPoolTest {
         assertEquals(0, p.blockedCount)
     }
 
+    // 话题被用户并进了另一个:连着它的改连那一个,位置不变;两个都连着的只留一个
+    @Test fun aMergedTopicsLinksMoveToTheTopicItWentInto() {
+        val p = ContactPool()
+        p.day(0, ContactRelation.Friend, topics = mapOf(0 to setOf("k1")))
+        p.day(1, ContactRelation.Friend, topics = mapOf(0 to setOf("k2")))
+        p.day(2, ContactRelation.Friend, topics = mapOf(0 to setOf("k3")))
+        p.day(2, ContactRelation.Friend, key = "bob", title = "Bob", topics = mapOf(0 to setOf("k3")))
+        fun topics(name: String) = p.all().single { it.name == name }.topics
+        assertEquals(listOf("k1", "k2", "k3"), topics("Alice"))
+        assertTrue(p.remapTopic("k1", "k9"))
+        assertEquals(listOf("k9", "k2", "k3"), topics("Alice"))
+        assertEquals(listOf("k3"), topics("Bob"))
+        assertTrue(p.remapTopic("k2", "k3"))
+        assertEquals(listOf("k9", "k3"), topics("Alice"))
+        // 没有谁连着它:没有改动
+        assertFalse(p.remapTopic("k1", "k3"))
+    }
+
     @Test fun topicLinksAreMechanicalBoundedAndPruned() {
         val p = ContactPool()
         p.day(0, ContactRelation.Friend, topics = mapOf(0 to setOf("k1", "k2")))

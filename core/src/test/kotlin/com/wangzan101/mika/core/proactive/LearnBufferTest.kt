@@ -179,6 +179,18 @@ class LearnBufferTest {
         assertTrue(b.outcome("z", LearnOutcome.Opened).isEmpty())
     }
 
+    // 话题被用户并进了另一个:归到它上面的通知之后才被点开/划掉,算到并进去的那个上
+    @Test fun eventsOfAMergedTopicPointAtTheTopicItWentInto() {
+        val b = LearnBuffer()
+        b.capture(rec("a")); b.capture(rec("z"))
+        val (a, z) = b.begin("com.shop")
+        b.finish(mapOf(a.seq to setOf("k1", "k2"), z.seq to setOf("k3")))
+        b.remapTopic("k1", "k2")
+        b.remapTopic("k3", "k4")
+        assertEquals(setOf("k2"), b.outcome("a", LearnOutcome.Opened))
+        assertEquals(setOf("k4"), b.outcome("z", LearnOutcome.Dismissed))
+    }
+
     @Test fun evictsDistilledFirstThenOldestPending() {
         val b = LearnBuffer(capacity = 3)
         b.capture(rec("a")); b.capture(rec("b"))

@@ -827,6 +827,76 @@ class LearnRunnerTest {
         assertEquals(0, e.runner.contactsView.value.blocked)
     }
 
+    // 话题页上把一个话题并进另一个:存下来只剩并进去的那个,证据并过去;联系人上的连接改指它;早先归到并掉的那个上的通知
+    // 之后才被点开,算到它上面;模型再新起并掉的那个名字,不另起。并掉不是删掉:不进「不再记录」,不记待删
+    @Test fun mergingATopicMovesItsEvidenceLinksAndName() = runTest {
+        val e = Env(this)
+        e.model.reply = { aliceReply }
+        repeat(12) { e.runner.capture(NoticeRecord("a$it", "com.chat", e.now(), "Alice", "message $it")) }
+        runCurrent()
+        val hiking = e.store.data.topics.single().id
+        assertEquals(listOf(hiking), e.contacts.data.contacts.single().topics)
+        e.model.reply = { newTopic("n1", label = "Trails") }
+        e.post(count = 12)
+        val trails = e.store.data.topics.single { it.label == "Trails" }.id
+        val marks = e.purges.writes
+        e.runner.mergeTopic(hiking, trails)
+        val merged = e.store.data.topics.single()
+        assertEquals(trails, merged.id)
+        assertEquals("Trails", merged.label)
+        assertEquals(setOf("com.chat", "com.shop"), merged.evidence.keys)
+        assertEquals(listOf(trails), e.runner.topics.value.map { it.id })
+        assertEquals(listOf(trails), e.contacts.data.contacts.single().topics)
+        assertEquals(listOf(trails), e.runner.contactsView.value.contacts.single().topics)
+        assertTrue(e.store.data.blocked.isEmpty())
+        assertEquals(0, e.runner.topicsBlocked.value)
+        assertEquals(marks, e.purges.writes)
+        // 归到「Hiking」上的那条聊天通知这时才被点开
+        e.runner.removed("a0", NotificationListenerService.REASON_CLICK)
+        assertEquals(1, e.store.data.topics.single().opened)
+        // 模型再新起「Hiking」:算到「Trails」上
+        e.model.reply = { newTopic("n1") }
+        e.post(count = 12)
+        assertEquals(listOf("Trails"), e.store.data.topics.map { it.label })
+        assertFalse(LearnDrop.Blocked in e.runner.state.value.feed.getValue("com.shop").dropped)
+        // 换一个进程:存下来的就是并好的样子,名字也还认
+        assertEquals(1, e.store.data.merged.size)
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf(trails), again.topics.value.map { it.id })
+        // 同一个、已经没有的:什么都不做,也不存
+        val saves = e.store.saves
+        e.runner.mergeTopic(trails, trails)
+        e.runner.mergeTopic(hiking, trails)
+        assertEquals(saves, e.store.saves)
+    }
+
+    // 请求在途时用户把它要引用的话题并掉了:回复引用的还是并掉的那个,算到并进去的那个上,不当成「被删了」丢掉
+    @Test fun aReplyCitingATopicMergedMeanwhileCountsOnTheOther() = runTest {
+        val e = Env(this)
+        e.model.reply = { newTopic("n1") }
+        e.post(count = 12)
+        e.model.reply = { newTopic("n1", label = "Trails") }
+        e.post(count = 12)
+        val hiking = e.store.data.topics.single { it.label == "Hiking" }.id
+        val trails = e.store.data.topics.single { it.label == "Trails" }.id
+        wait(LearnTuning.DAY_MS)
+        e.model.gate = CompletableDeferred()
+        e.post(count = 12)
+        assertEquals(3, e.model.calls.size)
+        // 这次给模型看的话题里「Hiking」是第几个
+        val lines = e.model.input(2).lines()
+        val ref = lines[lines.indexOf("Hiking") - 1].substringAfter("[").substringBefore("]")
+        e.model.reply = { """{"signals":[{"ids":["n1"],"topic":"$ref"}]}""" }
+        e.runner.mergeTopic(hiking, trails)
+        e.model.gate!!.complete(Unit)
+        runCurrent()
+        val t = e.store.data.topics.single()
+        assertEquals(trails, t.id)
+        assertEquals(2, t.days)
+        assertFalse(LearnDrop.NotApplied in e.runner.state.value.feed.getValue("com.shop").dropped)
+    }
+
     @Test fun unreadableContactStoreDoesNotBlockTopics() = runTest {
         val e = Env(this)
         e.contacts.failLoad = true

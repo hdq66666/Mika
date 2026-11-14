@@ -172,6 +172,11 @@ class LearnBuffer(private val capacity: Int = LearnTuning.BUFFER_CAP) {
         publish()
     }
 
+    /** 话题 [from] 被用户并进了 [into]:事件上指着它的改指那一个(之后才到的点开/划掉算到那一个上)。 */
+    fun remapTopic(from: String, into: String) {
+        events.replaceAll { if (from in it.topics) it.copy(topics = it.topics - from + into) else it }
+    }
+
     /** 话题被删了:事件上不再指着它。 */
     fun forgetTopics(ids: Set<String>) {
         if (ids.isEmpty()) return
