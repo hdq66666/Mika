@@ -576,9 +576,9 @@ class ProactiveRuntime(
             LiveUpdates.Verdict.BecameLive -> {
                 // 只记是哪个 App、出不出声,不记内容
                 Log.i(TAG, "status display, not taken: ${r.packageName} silent=${r.silent}")
-                hintBoard.dismissed(r.key)
+                hintBoard.withdraw(r.key)
                 inbox.remove(r.key)
-                learn.dropLive(r.key, r.postedAtMs - LiveUpdates.WINDOW_MS)
+                learn.dropLive(r.key, r.packageName, r.postedAtMs - LiveUpdates.WINDOW_MS)
                 return
             }
         }

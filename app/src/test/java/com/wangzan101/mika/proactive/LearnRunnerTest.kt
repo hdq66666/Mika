@@ -1556,13 +1556,33 @@ class LearnRunnerTest {
         e.runner.capture(NoticeRecord("promo", "com.maps", burst + 9, "周边优惠", "满减券到账"))
         runCurrent()
         assertEquals(5, e.runner.state.value.journal)
-        e.runner.dropLive("nav", burst + 6_000L - 60_000L)
+        e.runner.dropLive("nav", "com.maps", burst + 6_000L - 60_000L)
         assertEquals(listOf("常去的地方有新的评价", "周边优惠"), e.journal.data!!.entries.map { it.title })
         assertEquals(2, e.runner.state.value.journal)
         // 没有这个键的东西时什么都不做
         val saves = e.journal.saves
-        e.runner.dropLive("nothing", 0)
+        e.runner.dropLive("nothing", "com.maps", 0)
         assertEquals(saves, e.journal.saves)
+    }
+
+    // 认出一个键是状态显示时,正在给这个 App 写分段归纳的请求取消:不然回复回来,照着刚去掉的那几条原文写的句子还是进了归纳。
+    // 别的 App 的请求不动
+    @Test fun aNotesRequestInFlightIsCancelledWhenItsAppTurnsOutToPostAStatusDisplay() = runTest {
+        val e = Env(this)
+        e.digest = true
+        e.post(pkg = "com.maps", count = 19)
+        e.model.gate = CompletableDeferred()
+        e.model.notesReply = { oneNote }
+        e.post(pkg = "com.maps")
+        assertTrue(e.runner.requestActive)
+        e.runner.dropLive("x", "com.other", 0)
+        assertTrue(e.runner.requestActive)
+        e.runner.dropLive("k20", "com.maps", e.now() - 60_000L)
+        assertFalse(e.runner.requestActive)
+        e.model.gate!!.complete(Unit)
+        runCurrent()
+        assertTrue(e.digestStore.data.notes.isEmpty())
+        assertEquals(19, e.runner.state.value.journal)
     }
 
     // 每一条清除路径都要把通知原文带走(和「禁用 App 后要清掉排着队的」是同一类)
