@@ -645,6 +645,26 @@ class LearnRunnerTest {
         assertTrue(e.model.calls.isEmpty())
     }
 
+    // 池子里的话题比给模型看的位置多:这一批的 App 自己印证过的那个哪怕弱也给模型看(它再推同样的东西时模型才引用得上,
+    // 不然只能另起一个说法差不多的);别的 App 的一批还是只按强度挑,轮不到它
+    @Test fun theAppsOwnTopicsAreShownToTheModelEvenWhenWeak() = runTest {
+        val e = Env(this)
+        val today = 20_000L
+        val old = start - 5 * LearnTuning.DAY_MS
+        e.store.data = TopicPoolData(topics =
+            (0 until LearnTuning.EXISTING_MAX + 10).map {
+                ObservedTopic("kn$it", TopicKind.Interest, "News $it", start, start, mapOf("com.news" to listOf(today - 2, today - 1, today)))
+            } + ObservedTopic("kshop", TopicKind.Shopping, "Tents", old, old, mapOf("com.shop" to listOf(today - 5))))
+        e.post(count = 12)
+        val lines = e.model.input(0).lines()
+        assertEquals(LearnTuning.EXISTING_MAX, lines.count { it.contains("] kind: ") })
+        // 排在第一个(话题名在那一行的下一行,不可信的块里)
+        assertEquals("Tents", lines[lines.indexOfFirst { it.contains("] kind: ") } + 1])
+        e.post(pkg = "com.other", count = 12)
+        assertEquals(listOf("com.shop", "com.other"), e.model.packages())
+        assertFalse(e.model.input(1).contains("Tents"))
+    }
+
     @Test fun lateOutcomeReachesTheTopic() = runTest {
         val e = Env(this)
         e.model.reply = { newTopic("n1") }

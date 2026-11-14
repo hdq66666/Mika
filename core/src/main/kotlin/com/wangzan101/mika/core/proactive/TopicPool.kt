@@ -114,9 +114,24 @@ class TopicPool(data: TopicPoolData = TopicPoolData(), private val newId: () -> 
 
     operator fun get(id: String): ObservedTopic? = topics[id]
 
-    /** 给模型看的已有话题:强度×留存最高的 [limit] 个。 */
-    fun strongest(nowMs: Long, limit: Int = LearnTuning.EXISTING_MAX, includeSensitive: Boolean = false): List<ObservedTopic> =
-        topics.values.filter { includeSensitive || !it.sensitive }.sortedByDescending { it.score(nowMs) }.take(limit)
+    /**
+     * 给模型看的已有话题,一共 [limit] 个,都按强度×留存从高到低挑:先是 [packageName](这一批的 App)印证过的,最多占三分之二的位置;
+     * 剩下的位置给其余的里最强的(不管哪个 App;它自己的没占满时位置也归这边)。
+     * 模型只能引用它看得到的:池子里的话题比 [limit] 多得多时,只按强度挑的话,这个 App 以前推出来的那个话题多半不在里面,
+     * 它再推同样的东西,模型就只能另起一个说法差不多的。同一个 App 推的多半还是那些题材,所以先给它自己的;
+     * 但不全给它:话题很多的 App(比如聊天 App)不该把别的 App 的强话题全挤出去——同一个题材也会从别的 App 来。
+     */
+    fun strongest(
+        nowMs: Long,
+        limit: Int = LearnTuning.EXISTING_MAX,
+        includeSensitive: Boolean = false,
+        packageName: String? = null,
+    ): List<ObservedTopic> {
+        val byScore = topics.values.filter { includeSensitive || !it.sensitive }.sortedByDescending { it.score(nowMs) }
+        val own = if (packageName == null) emptyList() else byScore.filter { packageName in it.evidence }.take(limit * 2 / 3)
+        val ownIds = own.mapTo(HashSet()) { it.id }
+        return own + byScore.filter { it.id !in ownIds }.take(limit - own.size)
+    }
 
     /** 用上一次结果后的统计。[byEvent]:这一批的下标 → 归到的话题 id。[blocked]:新起的话题是用户删掉过的,没收的有几条。 */
     data class Applied(val byEvent: Map<Int, Set<String>>, val applied: Int, val missing: Int, val blocked: Int = 0)

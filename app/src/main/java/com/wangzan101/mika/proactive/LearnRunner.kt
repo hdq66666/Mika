@@ -1452,7 +1452,8 @@ internal class LearnRunner(
         val now = clock()
         // 给模型看的话题,和它回复里的 t1… 一一对应;请求途中被删了的,用的时候丢掉
         val allowSensitive = sensitive()
-        val shown = p.strongest(now, includeSensitive = allowSensitive).map { ExistingTopic(it.id, it.kind, it.label) }
+        // 这个 App 自己印证过的排在前面:它多半还在推那些题材,模型看得到才引用得上
+        val shown = p.strongest(now, includeSensitive = allowSensitive, packageName = packageName).map { ExistingTopic(it.id, it.kind, it.label) }
         // 联系人读不出来时不请模型给(给了也存不下)
         val contactsOn = loadedContacts() != null
         val lang = language()

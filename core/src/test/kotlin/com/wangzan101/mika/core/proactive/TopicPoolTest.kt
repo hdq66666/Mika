@@ -189,6 +189,40 @@ class TopicPoolTest {
         assertEquals(listOf("running shoes"), p.all().map { it.label })
     }
 
+    // 给模型看的只有 limit 个:这一批的 App 自己印证过的排在前面(哪怕弱),不然它再推同样的东西时模型看不到已有的那个,只能另起一个
+    @Test fun theBatchAppsOwnTopicsAreShownFirst() {
+        val p = TopicPool()
+        // 别的 App 的五个话题,各有两天的证据(强)
+        for (i in 0 until 5) {
+            p.apply("com.news", listOf(ev(0, pkg = "com.news")), listOf(new(0, label = "news $i")), t0, zone)
+            p.apply("com.news", listOf(ev(0, at = t0 + day, pkg = "com.news")), listOf(new(0, label = "news $i")), t0 + day, zone)
+        }
+        // 这个 App 的两个话题,各只有一天(弱)
+        p.apply("com.shop", listOf(ev(0), ev(1)), listOf(new(0, label = "running shoes"), new(1, label = "tents")), t0, zone)
+        val now = t0 + day
+        // 不说是哪个 App:只按强度,三个位置全是别的 App 的
+        assertTrue(p.strongest(now, limit = 3).all { it.label.startsWith("news") })
+        // 说了:它自己的两个都在,排在前面;剩下的位置按强度补
+        val shown = p.strongest(now, limit = 3, packageName = "com.shop")
+        assertEquals(setOf("running shoes", "tents"), shown.take(2).map { it.label }.toSet())
+        assertTrue(shown[2].label.startsWith("news"))
+        // 位置够时一个不少
+        assertEquals(7, p.strongest(now, packageName = "com.shop").size)
+        // 没推过东西的 App:和不说一样
+        assertEquals(p.strongest(now, limit = 3), p.strongest(now, limit = 3, packageName = "com.other"))
+        // 自己的话题比位置还多的 App:只占三分之二(挑它自己最强的),剩下的给其余的里最强的,不把别的 App 的全挤出去
+        // (「tents」再添两天,成了最强的)
+        p.apply("com.shop", listOf(ev(0, at = t0 - day)), listOf(new(0, label = "tents")), now, zone)
+        p.apply("com.shop", listOf(ev(0, at = t0 + day)), listOf(new(0, label = "tents")), now, zone)
+        val news = p.strongest(now, limit = 3, packageName = "com.news")
+        assertEquals(listOf(true, true, false), news.map { it.label.startsWith("news") })
+        assertEquals("tents", news[2].label)
+        // 六个位置:它自己的占四个,第五个是别人最强的,最后一个按强度轮到它自己剩下的那个
+        val six = p.strongest(now, limit = 6, packageName = "com.news")
+        assertEquals(listOf(true, true, true, true, false, true), six.map { it.label.startsWith("news") })
+        assertEquals("tents", six[4].label)
+    }
+
     @Test fun dataRoundTrip() {
         val p = TopicPool()
         p.apply("com.shop", listOf(ev(0, outcome = LearnOutcome.Opened)), listOf(new(0)), t0, zone)
