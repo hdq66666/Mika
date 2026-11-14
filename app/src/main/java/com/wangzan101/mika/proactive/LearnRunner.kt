@@ -1590,6 +1590,8 @@ internal class LearnRunner(
                 contactPool = it
                 contactsFlow.value = ContactsView(it.all(), it.blockedCount)
                 purgeContacts(it, purges.contactPurges)
+                // 以前按通知键存下来的:同名的并成一条(要在上面补做完记着的删除之后,那些记的是以前的 id)
+                if (it.adoptIdentities()) saveContacts(it)
             }
         } catch (e: CancellationException) {
             throw e

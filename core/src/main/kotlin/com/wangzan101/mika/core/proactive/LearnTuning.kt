@@ -66,8 +66,11 @@ object LearnTuning {
     const val ESTABLISHED_DAYS = 2
 
     // ---- 联系人与关系 ----
-    /** 联系人身份怎么算(见 [ContactIdentity]);真机上还在核实通知键是不是一个会话一个,先用两样都看的。 */
-    val CONTACT_ID = ContactIdStrategy.KeyAndTitle
+    /**
+     * 联系人身份怎么算(见 [ContactIdentity]):只看会话名。真机上核实过,通知键不是一个会话一个——有的聊天 App 的通知 id
+     * 是顺着往上加的,同一个群隔一会儿就换一个键;带着键算的话,同一个群每换一次键就多出一个联系人,谁也攒不够天数。
+     */
+    val CONTACT_ID = ContactIdStrategy.Title
     /** 一次回复最多认几条联系人。 */
     const val CONTACTS_MAX = 6
     /** 显示名最长多少(UTF-16 单位)。 */

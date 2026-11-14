@@ -1271,6 +1271,36 @@ class LearnRunnerTest {
         assertTrue(e.purges.contactPurges.isEmpty())
     }
 
+    // 以前按通知键存下来的联系人:读出来时同名的并成一条并存上;记着的、没存上的删除(记的是以前的 id)先补做,删掉的不借着合并回来
+    @Test fun storedContactsAreMergedByConversationNameWhenLoaded() = runTest {
+        fun old(key: String, title: String) = com.wangzan101.mika.core.proactive.ContactIdentity.of(
+            "com.chat", key, title, com.wangzan101.mika.core.proactive.ContactIdStrategy.KeyAndTitle)!!.id
+        val e = Env(this)
+        e.contacts.data = ContactPoolData(contacts = listOf(
+            ObservedContact(old("k1", "家长群"), "com.chat", "家长群", 1L, start, days = listOf(19_998L)),
+            ObservedContact(old("k2", "家长群"), "com.chat", "家长群", 1L, start, days = listOf(19_999L)),
+            ObservedContact(old("k3", "家长群"), "com.chat", "家长群", 1L, start, days = listOf(20_000L)),
+            ObservedContact(old("k4", "删掉的群"), "com.chat", "删掉的群", 1L, start, days = listOf(20_000L)),
+            ObservedContact(old("k5", "删掉的群"), "com.chat", "删掉的群", 1L, start, days = listOf(19_999L)),
+        ))
+        e.purges.contactPurges = setOf(":contact:" + old("k4", "删掉的群"))
+        e.runner.open()
+        val shown = e.runner.contactsView.value.contacts
+        assertEquals(listOf("家长群"), shown.map { it.name })
+        assertEquals(listOf(19_998L, 19_999L, 20_000L), shown.single().days)
+        assertTrue(shown.single().established)
+        // 存上了:文件里也是并好的一条,记着的删除划掉了
+        assertEquals(1, e.contacts.data.contacts.size)
+        assertTrue(e.contacts.data.contacts.single().id.startsWith("t"))
+        assertTrue(e.purges.contactPurges.isEmpty())
+        // 换一个进程再读:不再动
+        val saves = e.contacts.saves
+        val again = newProcess(e)
+        again.open()
+        assertEquals(1, again.contactsView.value.contacts.size)
+        assertEquals(saves, e.contacts.saves)
+    }
+
     // 清空全部正常做完:没有记着的待删(以前记着的也一并划掉)
     @Test fun clearAllLeavesNoPendingDeletionsWhenItWorked() = runTest {
         val e = Env(this)
