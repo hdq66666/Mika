@@ -32,6 +32,16 @@ class RawNoticeTest {
         assertFalse(plain.groupSummary || plain.foregroundService || plain.ongoing)
     }
 
+    // 会话名、是不是群:只有带会话样式的才往下传
+    @Test fun conversationNameAndGroupOnlyComeFromMessagingStyle() {
+        val styled = raw.copy(messagingStyle = true, title = "爬山群: 张三", conversationTitle = "爬山群", groupConversation = true).toRecord()
+        assertEquals("爬山群", styled.conversationTitle)
+        assertEquals(true, styled.group)
+        val plain = raw.copy(conversationTitle = "爬山群", groupConversation = true).toRecord()
+        assertEquals(null, plain.conversationTitle)
+        assertEquals(null, plain.group)
+    }
+
     @Test fun conversationFromStyleOrMessages() {
         assertFalse(raw.toRecord().conversation)
         assertTrue(raw.copy(messagingStyle = true).toRecord().conversation)

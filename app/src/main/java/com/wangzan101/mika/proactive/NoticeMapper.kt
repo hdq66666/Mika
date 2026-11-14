@@ -22,6 +22,10 @@ data class RawNotice(
     val ongoing: Boolean,
     val clearable: Boolean,
     val category: String?,
+    /** 会话样式里系统另给的会话名(群名);没有为 null。 */
+    val conversationTitle: String? = null,
+    /** 会话样式里系统说的「这是不是群聊」;没说为 null。 */
+    val groupConversation: Boolean? = null,
 ) {
     /** 正文优先取展开后的长文本,没有再取一行的正文;有会话样式或带消息列表的算会话。 */
     fun toRecord(): NoticeRecord = NoticeRecord(
@@ -37,6 +41,9 @@ data class RawNotice(
         foregroundService = flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
         clearable = clearable,
         category = category,
+        // 只有带会话样式的才信这两项:别的通知里这两个键没有约定的意思
+        group = groupConversation.takeIf { messagingStyle || messages.isNotEmpty() },
+        conversationTitle = conversationTitle?.takeIf { messagingStyle || messages.isNotEmpty() },
     )
 }
 
@@ -67,6 +74,9 @@ object NoticeMapper {
             ongoing = sbn.isOngoing,
             clearable = sbn.isClearable,
             category = n.category,
+            conversationTitle = (style?.conversationTitle ?: extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))?.toString(),
+            groupConversation = if (extras.containsKey(Notification.EXTRA_IS_GROUP_CONVERSATION)) extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
+                else style?.isGroupConversation?.takeIf { it },
         )
     }
 

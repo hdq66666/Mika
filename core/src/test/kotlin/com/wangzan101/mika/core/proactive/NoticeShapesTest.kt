@@ -67,12 +67,34 @@ class NoticeShapesTest {
         }
     }
 
-    // 别的 App、带会话样式的通知不动
+    // 别的 App 的通知不动;带会话样式、没有会话名的(私聊)也不动
     @Test fun otherAppsAndMessagingStyleAreUntouched() {
         val other = rec("com.shop", "订单(2条新消息)", "客服: 已发货")
         assertSame(other, NoticeShapes.apply(other))
         val styled = NoticeRecord("k", "com.tencent.mobileqq", 1, "群(2条新消息)", "甲: 乙", listOf(NoticeMessage("甲", "乙", 1)), conversation = true)
         assertSame(styled, NoticeShapes.apply(styled))
+    }
+
+    // 会话样式的群聊(任何 App):系统把标题写成「会话名: 发言人」,会话名另给。标题换成会话名——不然同一个群里每个人说话都成了另一个会话
+    @Test fun messagingStyleGroupsUseTheSystemsConversationName() {
+        fun styled(title: String, conv: String?, group: Boolean?, sender: String) = NoticeShapes.apply(NoticeFilter.sanitize(NoticeRecord(
+            "k", "org.chat.any", 1, title, "那句话", listOf(NoticeMessage(sender, "那句话", 1)), conversation = true, group = group, conversationTitle = conv)))
+        val a = styled("周末爬山群: 张三", "周末爬山群", true, "张三")
+        val b = styled("周末爬山群：李四", "周末爬山群", true, "李四")
+        assertEquals("周末爬山群", a.title)
+        assertEquals(a.title, b.title)
+        assertEquals(true, a.group)
+        assertEquals("张三", a.messages.single().sender)
+        // 系统没说是不是群:有会话名就当群
+        assertEquals(true, styled("周末爬山群: 张三", "周末爬山群", null, "张三").group)
+        // 系统说了不是群的听系统的
+        assertEquals(false, styled("备注名: 张三", "备注名", false, "张三").group)
+        // 私聊:没有会话名,标题就是对方
+        val p = styled("张三", null, false, "张三")
+        assertEquals("张三", p.title)
+        assertEquals(false, p.group)
+        // 会话名只有空白、控制字符的当没有
+        assertEquals("周末爬山群: 张三", styled("周末爬山群: 张三", " \u200B ", true, "张三").title)
     }
 
     // 已知的误判(写在说明里):QQ 私聊里对方发来「时间: 明天」这种话,会被当成群里叫「时间」的人说的;会话还是算在对方头上

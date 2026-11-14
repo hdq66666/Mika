@@ -28,6 +28,11 @@ data class NoticeRecord(
     val sender: String? = null,
     /** 这是群聊(true)还是和一个人的私聊(false);看不出来、不是聊天的为 null。同样由 [NoticeShapes] 定。 */
     val group: Boolean? = null,
+    /**
+     * 带会话样式的通知里系统另给的会话名(群名)。有它的时候,系统把 [title] 写成「会话名: 发言人」——发言人每条消息都在变,
+     * 不能拿来认会话。[NoticeShapes] 拿它换掉 [title];没有会话样式、私聊的为 null。
+     */
+    val conversationTitle: String? = null,
 ) {
     /** 给人和模型看的那一句:群里的带上是谁说的(「张三: 明天见」),别的就是正文。 */
     val said: String get() = if (sender.isNullOrBlank()) text else "$sender: $text"
