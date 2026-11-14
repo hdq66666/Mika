@@ -326,8 +326,11 @@ fun ProactiveLearnScreen(onBack: () -> Unit) {
     }
     merging?.let { t ->
         // 把这个话题并进另一个:列出其他话题(名字像的排在前面),点一个就并好并关掉。并了分不开,弹窗里写明。
-        // 话题可以有几百个:列表限高、能滚
-        val others = remember(t.id, topics) { TopicPool.mergeCandidates(t, topics, System.currentTimeMillis()) }
+        // 话题可以有几百个:列表限高、能滚。
+        // 先后只在弹窗打开时排一次:开着的时候话题池会变(来了一批归纳、有通知被点开),跟着重排的话,
+        // 手指落下去的那一行可能已经换成了别的话题,而点一下就并了、分不开。中途没了的话题从列表里去掉
+        val order = remember(t.id) { TopicPool.mergeCandidates(t, topics, System.currentTimeMillis()).map { it.id } }
+        val others = remember(order, topics) { topics.associateBy { it.id }.let { now -> order.mapNotNull(now::get) } }
         MikaDialog(
             onDismissRequest = { merging = null },
             title = { Text(stringResource(R.string.proactive_learn_topic_merge_title, t.label)) },
