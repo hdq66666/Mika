@@ -19,6 +19,7 @@ import com.wangzan101.mika.core.proactive.DigestNote
 import com.wangzan101.mika.core.proactive.LearnLevel
 import com.wangzan101.mika.core.proactive.SourceTier
 import com.wangzan101.mika.core.proactive.SpanKind
+import com.wangzan101.mika.core.proactive.TopicPool
 import com.wangzan101.mika.core.proactive.LearnDrop
 import com.wangzan101.mika.core.proactive.DigestPool
 import com.wangzan101.mika.core.proactive.SpanDigest
@@ -839,7 +840,6 @@ class LearnRunnerTest {
         e.model.reply = { newTopic("n1", label = "Trails") }
         e.post(count = 12)
         val trails = e.store.data.topics.single { it.label == "Trails" }.id
-        val marks = e.purges.writes
         e.runner.mergeTopic(hiking, trails)
         val merged = e.store.data.topics.single()
         assertEquals(trails, merged.id)
@@ -850,7 +850,9 @@ class LearnRunnerTest {
         assertEquals(listOf(trails), e.runner.contactsView.value.contacts.single().topics)
         assertTrue(e.store.data.blocked.isEmpty())
         assertEquals(0, e.runner.topicsBlocked.value)
-        assertEquals(marks, e.purges.writes)
+        // 两份都存上了:没有记着要补做的
+        assertTrue(e.purges.topicPurges.isEmpty())
+        assertTrue(e.purges.contactPurges.isEmpty())
         // 归到「Hiking」上的那条聊天通知这时才被点开
         e.runner.removed("a0", NotificationListenerService.REASON_CLICK)
         assertEquals(1, e.store.data.topics.single().opened)
@@ -869,6 +871,119 @@ class LearnRunnerTest {
         e.runner.mergeTopic(trails, trails)
         e.runner.mergeTopic(hiking, trails)
         assertEquals(saves, e.store.saves)
+    }
+
+    /** 两个话题「Hiking」(聊天 App 里 Alice 的会话连着它)和「Trails」。返回两个的 id。 */
+    private fun TestScope.hikingAndTrails(e: Env): Pair<String, String> {
+        e.model.reply = { aliceReply }
+        repeat(12) { e.runner.capture(NoticeRecord("a$it", "com.chat", e.now(), "Alice", "message $it")) }
+        runCurrent()
+        e.model.reply = { newTopic("n1", label = "Trails") }
+        e.post(count = 12)
+        val hiking = e.store.data.topics.single { it.label == "Hiking" }.id
+        assertEquals(listOf(hiking), e.contacts.data.contacts.single().topics)
+        return hiking to e.store.data.topics.single { it.label == "Trails" }.id
+    }
+
+    // 合并没存上(存储满了之类),用户接着把并好的那个删了,也没存上,进程没了。下次读出来:文件里两个话题都还在,
+    // 合并和删除都得补做——只补删除的话,并掉的那个带着它的证据回来了,名字也不在「不再记录」里
+    @Test fun anUnsavedMergeIsRedoneBeforeTheDeleteThatFollowedIt() = runTest {
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.store.failSave = true
+        e.runner.mergeTopic(hiking, trails)
+        e.runner.deleteTopic(trails)
+        assertEquals(2, e.store.data.topics.size)
+        assertEquals(2, e.purges.topicPurges.size)
+        e.store.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertTrue(again.topics.value.isEmpty())
+        assertTrue(e.store.data.topics.isEmpty())
+        // 两个名字都进了「不再记录」
+        assertEquals(setOf(TopicPool.fingerprint("Hiking"), TopicPool.fingerprint("Trails")), e.store.data.blocked.toSet())
+        assertTrue(e.purges.topicPurges.isEmpty())
+        // 联系人上不再连着它们
+        assertTrue(e.contacts.data.contacts.single().topics.isEmpty())
+    }
+
+    // 只是合并没存上、进程没了:下次读出来补做,不用用户再并一次;并掉的名字照样认
+    @Test fun anUnsavedMergeIsRedoneWhenThePoolLoadsAgain() = runTest {
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.store.failSave = true
+        e.runner.mergeTopic(hiking, trails)
+        assertEquals(2, e.store.data.topics.size)
+        e.store.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf(trails), e.store.data.topics.map { it.id })
+        assertEquals(setOf("com.chat", "com.shop"), e.store.data.topics.single().evidence.keys)
+        assertEquals(mapOf(TopicPool.fingerprint("Hiking") to trails), e.store.data.merged)
+        assertTrue(e.store.data.blocked.isEmpty())
+        assertEquals(listOf(trails), e.contacts.data.contacts.single().topics)
+        assertTrue(e.purges.topicPurges.isEmpty())
+        // 存上了就不再记着:再换一个进程不会重做,也不多存
+        val saves = e.store.saves
+        newProcess(e).open()
+        assertEquals(saves, e.store.saves)
+    }
+
+    // 合并的那一刻联系人那份读不出来(密钥库一时不可用),话题那份照常并了、存了。联系人读得出来之后:
+    // 连着并掉的那个话题的改连并进去的那个,不被当成指着空处的连接去掉
+    @Test fun contactLinksFollowAMergeMadeWhileContactsWereUnreadable() = runTest {
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.contacts.failLoad = true
+        val later = newProcess(e)
+        later.open()
+        later.mergeTopic(hiking, trails)
+        assertEquals(listOf(trails), e.store.data.topics.map { it.id })
+        assertEquals(listOf(hiking), e.contacts.data.contacts.single().topics)
+        assertEquals(1, e.purges.contactPurges.size)
+        e.contacts.failLoad = false
+        later.open()
+        assertEquals(listOf(trails), e.contacts.data.contacts.single().topics)
+        assertEquals(listOf(trails), later.contactsView.value.contacts.single().topics)
+        assertTrue(e.purges.contactPurges.isEmpty())
+    }
+
+    // 联系人那份改了却没存上、进程没了:下次读出来补做
+    @Test fun contactLinksFollowAMergeWhoseContactSaveFailed() = runTest {
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.contacts.failSave = true
+        e.runner.mergeTopic(hiking, trails)
+        assertEquals(listOf(trails), e.store.data.topics.map { it.id })
+        assertEquals(listOf(hiking), e.contacts.data.contacts.single().topics)
+        e.contacts.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf(trails), e.contacts.data.contacts.single().topics)
+        assertTrue(e.purges.contactPurges.isEmpty())
+    }
+
+    // 连着并了两回都没存上:记着的两次合并不分先后,补做时一路跟到最后并进去的那个
+    @Test fun unsavedMergesInARowEndUpOnTheLastTopic() = runTest {
+        val e = Env(this)
+        val (hiking, trails) = hikingAndTrails(e)
+        e.model.reply = { newTopic("n1", label = "Camping") }
+        e.post(count = 12)
+        val camping = e.store.data.topics.single { it.label == "Camping" }.id
+        e.store.failSave = true
+        e.contacts.failSave = true
+        e.runner.mergeTopic(hiking, trails)
+        e.runner.mergeTopic(trails, camping)
+        assertEquals(3, e.store.data.topics.size)
+        e.store.failSave = false
+        e.contacts.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertEquals(listOf(camping), e.store.data.topics.map { it.id })
+        assertEquals(mapOf(TopicPool.fingerprint("Hiking") to camping, TopicPool.fingerprint("Trails") to camping), e.store.data.merged)
+        assertEquals(listOf(camping), e.contacts.data.contacts.single().topics)
+        assertTrue(e.purges.topicPurges.isEmpty())
+        assertTrue(e.purges.contactPurges.isEmpty())
     }
 
     // 请求在途时用户把它要引用的话题并掉了:回复引用的还是并掉的那个,算到并进去的那个上,不当成「被删了」丢掉

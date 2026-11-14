@@ -45,12 +45,14 @@ class LearnPrefsTest {
         assertEquals(emptySet<String>(), p.topicPurges)
         assertEquals(emptySet<String>(), p.contactPurges)
         assertEquals(emptySet<String>(), p.digestPurges)
-        p.topicPurges = setOf(LearnRunner.PURGE_SENSITIVE, "com.chat")
-        p.contactPurges = setOf("com.chat")
+        // 记着的合并(两个话题 id,中间一个 >)也原样存、原样读
+        val merge = ":merge:k0123456789ab>kba9876543210"
+        p.topicPurges = setOf(LearnRunner.PURGE_SENSITIVE, "com.chat", merge)
+        p.contactPurges = setOf("com.chat", merge)
         p.digestPurges = setOf("com.chat", "com.shop")
         val back = ProactivePrefs(raw)
-        assertEquals(setOf(LearnRunner.PURGE_SENSITIVE, "com.chat"), back.topicPurges)
-        assertEquals(setOf("com.chat"), back.contactPurges)
+        assertEquals(setOf(LearnRunner.PURGE_SENSITIVE, "com.chat", merge), back.topicPurges)
+        assertEquals(setOf("com.chat", merge), back.contactPurges)
         assertEquals(setOf("com.chat", "com.shop"), back.digestPurges)
         back.topicPurges = emptySet()
         assertEquals(emptySet<String>(), ProactivePrefs(raw).topicPurges)

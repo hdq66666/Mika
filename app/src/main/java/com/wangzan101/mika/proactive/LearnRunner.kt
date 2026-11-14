@@ -494,16 +494,52 @@ internal class LearnRunner(
 
     /**
      * 把话题 [fromId] 并进 [intoId](用户在话题页上做的;规则见 [TopicPool.merge]):事件上、联系人上指着 [fromId] 的改指 [intoId]。
-     * 不走删除那条路:并掉的名字不进「不再记录」,连接也不丢,不记待删。
-     * 先存联系人再存话题:中途进程没了,联系人上连着的是还在的那个话题;反过来的话连着的是已经没了的,下次整理时连接就丢了。
-     * 话题那份没存上的,内存里已经并了,下次有改动时一起存;进程先没了的话两个话题都还在,用户再并一次。
+     * 不走删除那条路:并掉的名字不进「不再记录」,连接也不丢。
+     *
+     * 和删除一样先记下来再存(见 [LearnPurges]),存上了才划掉;没存上、进程又没了的,下次读出来时补做:
+     * - 话题那份:不补做的话,文件里两个话题都还在。用户并完接着把并好的那个删了(删除是记着的、会补做),
+     *   补做时文件里没有这次合并,并掉的那个就带着它的证据回来了,名字也不在「不再记录」里。
+     * - 联系人那份:这会儿读不出来、或改了没存上的,文件里连着的还是并掉的那个 id;等话题那份存上了,
+     *   下次整理就把这些连接当成指着空处的去掉了。
+     * 先存联系人再存话题:中途进程没了,联系人上连着的是还在的那个话题。
      */
     fun mergeTopic(fromId: String, intoId: String) {
         val p = loadedPool() ?: return
         if (!p.merge(fromId, intoId)) return
+        val mark = MARK_MERGE + fromId + MERGE_INTO + intoId
+        purges.topicPurges = purges.topicPurges + mark
+        topicPurgesApplied = topicPurgesApplied + mark
         buffer.remapTopic(fromId, intoId)
-        (contactPool ?: loadedContacts())?.let { if (it.remapTopic(fromId, intoId)) saveContacts(it) }
+        val c = contactPool
+        if (c == null) {
+            // 联系人还没读出来:记下来再读;读出来的那一刻把记着的(连同这一项)做掉,读不出来就留到读得出来时
+            purges.contactPurges = purges.contactPurges + mark
+            loadedContacts()
+        } else if (c.remapTopic(fromId, intoId)) {
+            purges.contactPurges = purges.contactPurges + mark
+            contactPurgesApplied = contactPurgesApplied + mark
+            saveContacts(c)
+        }
         save(p)
+    }
+
+    /**
+     * [what] 里记着的合并:并掉的话题 id → 并进去的 id。连着并了几回的(甲并进乙、乙又并进丙)直接指到最后那个:
+     * 记号是一个集合,不分先后,照着做的时候乙可能已经不在了。
+     */
+    private fun mergesIn(what: Set<String>): List<Pair<String, String>> {
+        val into = HashMap<String, String>()
+        for (w in what) {
+            if (!w.startsWith(MARK_MERGE)) continue
+            val ids = w.removePrefix(MARK_MERGE).split(MERGE_INTO)
+            if (ids.size == 2 && ids[0].isNotEmpty() && ids[1].isNotEmpty()) into[ids[0]] = ids[1]
+        }
+        return into.keys.map { from ->
+            var last = into.getValue(from)
+            // 最多跟这么多步:记号坏了绕成圈的也停得下来
+            for (step in 0 until into.size) last = into[last] ?: break
+            from to last
+        }
     }
 
     /**
@@ -627,6 +663,9 @@ internal class LearnRunner(
     private fun purgeTopics(p: TopicPool, what: Set<String>) {
         if (what.isEmpty()) return
         val gone = HashSet<String>()
+        // 没存上的合并先补做:之后才删、才清的可能就是并好的那个(并进过它的名字要跟着进「不再记录」)。
+        // 已经存上了的再做一遍什么都不会变:并掉的那个 id 不在了,id 也不会再发给别的话题
+        for ((from, into) in mergesIn(what)) p.merge(from, into)
         for (w in what) when {
             w == MARK_ALL -> { gone += p.all().map { it.id }; p.clear() }
             w == PURGE_SENSITIVE -> gone += p.deleteSensitive()
@@ -642,6 +681,8 @@ internal class LearnRunner(
 
     private fun purgeContacts(c: ContactPool, what: Set<String>) {
         if (what.isEmpty()) return
+        // 没存上的合并先补做:连着并掉的那个话题的,改连并进去的那个
+        for ((from, into) in mergesIn(what)) c.remapTopic(from, into)
         for (w in what) when {
             w == MARK_ALL -> c.clear()
             w == PURGE_SENSITIVE -> c.deleteSensitive()
@@ -1708,6 +1749,9 @@ internal class LearnRunner(
         private const val MARK_ALL = ":all"
         private const val MARK_TOPIC = ":topic:"
         private const val MARK_CONTACT = ":contact:"
+        /** 一次合并:后面是并掉的话题 id、[MERGE_INTO]、并进去的话题 id。话题、联系人两份上都可能记着。 */
+        private const val MARK_MERGE = ":merge:"
+        private const val MERGE_INTO = ">"
         private const val MARK_NOTE = ":note:"
         private const val MARK_DAY = ":day:"
         private const val MARK_WEEK = ":week:"
