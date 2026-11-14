@@ -686,7 +686,8 @@ internal class LearnRunner(
         for (w in what) when {
             w == MARK_ALL -> c.clear()
             w == PURGE_SENSITIVE -> c.deleteSensitive()
-            w.startsWith(MARK_CONTACT) -> c.delete(w.removePrefix(MARK_CONTACT))
+            // 不在了也要记进「不再记录」(见 [ContactPool.forget])
+            w.startsWith(MARK_CONTACT) -> c.forget(w.removePrefix(MARK_CONTACT))
             w.startsWith(":") -> {}
             else -> c.clearApp(w)
         }

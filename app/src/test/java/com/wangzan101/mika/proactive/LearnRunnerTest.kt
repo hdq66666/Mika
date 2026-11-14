@@ -1506,6 +1506,32 @@ class LearnRunnerTest {
         assertEquals(saves, e.contacts.saves)
     }
 
+    // 换身份之后没存上(存储满了之类),用户删掉了换好的那一条,也没存上,进程没了。下次读出来的还是换之前的文件:
+    // 记着的删除要作数,同名的那几条不能再换一遍身份就回来
+    @Test fun aDeleteMadeAfterAnUnsavedMigrationStillHolds() = runTest {
+        fun old(key: String, title: String) = com.wangzan101.mika.core.proactive.ContactIdentity.of(
+            "com.chat", key, title, com.wangzan101.mika.core.proactive.ContactIdStrategy.KeyAndTitle)!!.id
+        val e = Env(this)
+        e.contacts.data = ContactPoolData(contacts = listOf(
+            ObservedContact(old("k1", "家长群"), "com.chat", "家长群", 1L, start, days = listOf(19_999L)),
+            ObservedContact(old("k2", "家长群"), "com.chat", "家长群", 1L, start, days = listOf(20_000L)),
+        ))
+        e.contacts.failSave = true
+        e.runner.open()
+        val merged = e.runner.contactsView.value.contacts.single()
+        assertTrue(merged.id.startsWith("t"))
+        e.runner.deleteContact(merged.id)
+        assertEquals(2, e.contacts.data.contacts.size)
+        assertEquals(1, e.purges.contactPurges.size)
+        e.contacts.failSave = false
+        val again = newProcess(e)
+        again.open()
+        assertTrue(again.contactsView.value.contacts.isEmpty())
+        assertTrue(e.contacts.data.contacts.isEmpty())
+        assertTrue(merged.id in e.contacts.data.blocked)
+        assertTrue(e.purges.contactPurges.isEmpty())
+    }
+
     // 清空全部正常做完:没有记着的待删(以前记着的也一并划掉)
     @Test fun clearAllLeavesNoPendingDeletionsWhenItWorked() = runTest {
         val e = Env(this)

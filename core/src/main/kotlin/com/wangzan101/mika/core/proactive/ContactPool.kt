@@ -165,6 +165,9 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
         if (strategy != ContactIdStrategy.KeyAndTitle) events.forEachIndexed { i, e ->
             val now = ids[i]?.id ?: return@forEachIndexed
             if (now in blocked) return@forEachIndexed
+            // 现在的 id 上已经有联系人了(用户留着的那一条换过来的,或换了通知键之后新记的):不带。带了的话它既在名单里
+            // 又在列表里:留在页面上,却再也不会动,也没有任何说明。用户不要它可以再删一次,这回按会话名记,换了键也挡得住
+            if (now in contacts) return@forEachIndexed
             val before = ContactIdentity.of(e.packageName, e.key, e.title, ContactIdStrategy.KeyAndTitle)?.id
             if (before != null && before in blocked) { block(now); carried = true }
         }
@@ -280,6 +283,19 @@ class ContactPool(data: ContactPoolData = ContactPoolData()) {
         val c = contacts.remove(id) ?: return false
         block(id)
         if (fromAnOlderStrategy(id)) ContactIdentity.ofStored(c.packageName, c.name, strategy)?.let(::block)
+        return true
+    }
+
+    /**
+     * 补做一次记着的删除([id] 是当时删掉的那个联系人):还在就照常删;不在了也把 [id] 记进「不再记录」。
+     * 不在是会有的:把以前的条目换成现在的身份([adoptIdentities])之后没存上,用户又删了换好的那一条、也没存上,
+     * 进程没了——下次读出来的还是换之前的文件,里面没有这个 id。只是跳过的话,接着再换一遍身份,删掉的就回来了。
+     * 有改动返回 true。
+     */
+    fun forget(id: String, strategy: ContactIdStrategy = LearnTuning.CONTACT_ID): Boolean {
+        if (delete(id, strategy)) return true
+        if (id in blocked) return false
+        block(id)
         return true
     }
 

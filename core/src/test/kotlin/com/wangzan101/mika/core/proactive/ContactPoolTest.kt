@@ -140,6 +140,43 @@ class ContactPoolTest {
         assertEquals(2, q.all().size)
     }
 
+    // 以前同一个群存成了好几条,用户删掉了几条重复的、留着一条。留着的那条换成了现在的身份;之后删掉的某个通知键又来了:
+    // 不能因此把留着的这条记进「不再记录」——那样它还在页面上,却再也不动了
+    @Test fun aKeptContactIsNotBlockedByADeletedDuplicateOfIt() {
+        val p = ContactPool(ContactPoolData(
+            contacts = listOf(ObservedContact(oldId("k1", "家长群"), "com.chat", "家长群", 1, 2, days = listOf(19_999L))),
+            blocked = listOf(oldId("k2", "家长群"), oldId("k3", "家长群")),
+        ))
+        assertTrue(p.adoptIdentities())
+        p.seen(0, "k2", "家长群")
+        val c = p.all().single()
+        assertEquals(nowId("家长群"), c.id)
+        assertEquals(listOf(19_999L, 20_000L), c.days)
+        assertEquals(2, p.blockedCount)
+        // 用户这时删掉它:按会话名记,之后换什么键都不再记
+        assertTrue(p.delete(c.id))
+        p.seen(1, "k9", "家长群(3条新消息)")
+        assertTrue(p.all().isEmpty())
+    }
+
+    // 补做记着的删除:联系人不在了(读出来的是换身份之前的文件)也要记进「不再记录」,接着换身份时同名的才不会回来
+    @Test fun aRememberedDeleteBlocksTheIdEvenWhenTheContactIsNotThere() {
+        val p = ContactPool(ContactPoolData(contacts = listOf(
+            ObservedContact(oldId("k1", "家长群"), "com.chat", "家长群", 1, 2, days = listOf(20_000L)),
+            ObservedContact(oldId("k2", "家长群"), "com.chat", "家长群", 3, 4, days = listOf(20_001L)),
+            ObservedContact(oldId("k3", "别的群"), "com.chat", "别的群", 3, 4, days = listOf(20_001L)),
+        )))
+        assertTrue(p.forget(nowId("家长群")))
+        // 已经记着的不算改动
+        assertFalse(p.forget(nowId("家长群")))
+        assertEquals(3, p.all().size)
+        assertTrue(p.adoptIdentities())
+        assertEquals(listOf("别的群"), p.all().map { it.name })
+        // 还在的照常删
+        assertTrue(p.forget(nowId("别的群")))
+        assertTrue(p.all().isEmpty())
+    }
+
     // 名字是空的、算不出现在的身份的旧条目:原样留着(等它淡忘),不丢也不乱并
     @Test fun storedEntriesWithoutAUsableNameAreLeftAsTheyAre() {
         val odd = ObservedContact("b0123456789abcdef", "com.chat", " ", 1, 2, days = listOf(20_000L))
