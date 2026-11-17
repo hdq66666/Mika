@@ -34,8 +34,12 @@ sealed interface SpeechChoice {
     /** Native streaming ASR, with credentials stored separately from this non-secret selection. */
     data class Doubao(val resourceId: String = "volc.seedasr.sauc.duration") : SpeechChoice
 
-    /** 自建的 Fun-ASR 实时服务;[url] 是规范过的 ws(s) 地址(见 [FunAsrProtocol.normalize]),不含密钥。 */
-    data class FunAsr(val url: String, val language: AsrLanguage = AsrLanguage.Auto) : SpeechChoice
+    /**
+     * 自建的实时识别服务(说 Fun-ASR 实时服务那套消息的,模型可以是 Fun-ASR 或 Qwen3-ASR);[url] 是规范过的 ws(s) 地址
+     * (见 [FunAsrProtocol.normalize]),不含密钥。[model] 是试连时服务端报的模型 id(见 [FunAsrProtocol.cleanModel]),
+     * 没报过为空串;只用来显示。
+     */
+    data class FunAsr(val url: String, val language: AsrLanguage = AsrLanguage.Auto, val model: String = "") : SpeechChoice
 
     /**
      * 阿里云百炼实时语音识别;API Key 按地域另外加密存,这里只有模型、地域和业务空间 ID([workspace],
@@ -105,9 +109,9 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
     /** 上次给自建服务选的识别语言。 */
     val funAsrLanguage: AsrLanguage get() = AsrLanguage.of(prefs.getString(FUNASR_LANGUAGE, null))
 
-    /** 选用这个自建 Fun-ASR 服务(地址先经 [FunAsrProtocol.normalize])。 */
-    fun saveFunAsr(url: String, language: AsrLanguage = AsrLanguage.Auto) {
-        val choice = SpeechChoice.FunAsr(requireNotNull(FunAsrProtocol.normalize(url)), language)
+    /** 选用这个自建服务(地址先经 [FunAsrProtocol.normalize]);[model] 是试连时它报的模型 id,没报就不传。 */
+    fun saveFunAsr(url: String, language: AsrLanguage = AsrLanguage.Auto, model: String? = null) {
+        val choice = SpeechChoice.FunAsr(requireNotNull(FunAsrProtocol.normalize(url)), language, FunAsrProtocol.cleanModel(model).orEmpty())
         prefs.edit().putString(FUNASR_URL, choice.url).putString(FUNASR_LANGUAGE, language.code).putString(KEY, encode(choice).toString())
             .putString(LIVE_LAST, encode(choice).toString()).apply()
         _choice.value = choice
@@ -228,6 +232,7 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
                 put(TYPE, JsonPrimitive("funasr"))
                 put("url", JsonPrimitive(choice.url))
                 if (choice.language != AsrLanguage.Auto) put("language", JsonPrimitive(choice.language.code))
+                if (choice.model.isNotEmpty()) put("model", JsonPrimitive(choice.model))
             }
             is SpeechChoice.Bailian -> {
                 put(TYPE, JsonPrimitive("bailian"))
@@ -253,7 +258,12 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
         "doubao" -> obj["resourceId"]?.jsonPrimitive?.contentOrNull
             ?.takeIf { it in DoubaoProtocol.resources }?.let { SpeechChoice.Doubao(it) }
         "funasr" -> obj["url"]?.jsonPrimitive?.contentOrNull?.let(FunAsrProtocol::normalize)
-            ?.let { SpeechChoice.FunAsr(it, AsrLanguage.of(obj["language"]?.jsonPrimitive?.contentOrNull)) }
+            ?.let {
+                SpeechChoice.FunAsr(
+                    it, AsrLanguage.of(obj["language"]?.jsonPrimitive?.contentOrNull),
+                    FunAsrProtocol.cleanModel(obj["model"]?.jsonPrimitive?.contentOrNull).orEmpty(),
+                )
+            }
         "bailian" -> {
             val model = obj["model"]?.jsonPrimitive?.contentOrNull?.takeIf(BailianProtocol::validModel)
             val region = BailianRegion.entries.firstOrNull { it.name == obj["region"]?.jsonPrimitive?.contentOrNull }

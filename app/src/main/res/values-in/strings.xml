@@ -69,7 +69,7 @@
     <string name="speech_doubao_plan">Penagihan</string>
     <string name="speech_doubao_duration_note">Ditagih per waktu pengenalan</string>
     <string name="speech_doubao_concurrent_note">Ditagih per koneksi bersamaan</string>
-    <string name="speech_funasr_model">Fun-ASR (dihosting sendiri)</string>
+    <string name="speech_funasr_model">%1$s (dihosting sendiri)</string>
     <string name="speech_funasr_setup_hint">Kata-kata muncul saat Anda berbicara, dikenali oleh server Fun-ASR real-time yang Anda jalankan sendiri (serve_realtime_ws.py dari proyek Fun-ASR), biasanya di jaringan lokal. Tidak perlu akun atau kunci.</string>
     <string name="speech_funasr_server">Server</string>
     <string name="speech_funasr_address">Alamat</string>

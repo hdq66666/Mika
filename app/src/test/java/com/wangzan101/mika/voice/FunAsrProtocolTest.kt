@@ -117,6 +117,40 @@ class FunAsrProtocolTest {
         assertEquals(LiveAsrUpdate.Ended(final), p.read("""{"event": "stopped"}"""))
     }
 
+    // 服务端在「开始」里报了模型 id 就记下(原协议没有这一项);没报的按默认的 Fun-ASR 模型算
+    @Test fun startedMayReportTheModel() {
+        val stock = FunAsrProtocol()
+        assertEquals(LiveAsrUpdate.Started, stock.read("""{"event": "started"}"""))
+        assertNull(stock.model)
+        assertEquals("Fun-ASR-Nano-2512", FunAsrProtocol.modelName(stock.model))
+        assertEquals("Fun-ASR", FunAsrProtocol.family(stock.model))
+
+        val qwen = FunAsrProtocol()
+        assertEquals(LiveAsrUpdate.Started, qwen.read("""{"event": "started", "model": "Qwen/Qwen3-ASR-1.7B"}"""))
+        assertEquals(FunAsrProtocol.QWEN3_ASR_MODEL, qwen.model)
+        assertEquals("Qwen3-ASR-1.7B", FunAsrProtocol.modelName(qwen.model))
+        assertEquals("Qwen3-ASR", FunAsrProtocol.family(qwen.model))
+    }
+
+    // 模型 id 是服务端给的字,要存、要显示:只收字母数字和 ._/-,太长、带别的字符的当没报;认不出是哪家的直接用短名
+    @Test fun reportedModelIsBoundedAndNamed() {
+        assertEquals("FunAudioLLM/Fun-ASR-MLT-Nano-2512", FunAsrProtocol.cleanModel(" FunAudioLLM/Fun-ASR-MLT-Nano-2512 "))
+        assertNull(FunAsrProtocol.cleanModel(""))
+        assertNull(FunAsrProtocol.cleanModel(null))
+        assertNull(FunAsrProtocol.cleanModel("a model <b>"))
+        assertNull(FunAsrProtocol.cleanModel("模型"))
+        assertNull(FunAsrProtocol.cleanModel("x".repeat(81)))
+        assertEquals("Fun-ASR", FunAsrProtocol.family("FunAudioLLM/Fun-ASR-MLT-Nano-2512"))
+        assertEquals("Qwen3-ASR", FunAsrProtocol.family("qwen3-asr-0.6b"))
+        assertEquals("whisper-large-v3", FunAsrProtocol.family("openai/whisper-large-v3"))
+        // 带了不合规的 model(字符不对、类型不对)不影响「开始」
+        for (bad in listOf("\"<script>\"", "{\"id\": \"x\"}", "[\"x\"]", "null")) {
+            val p = FunAsrProtocol()
+            assertEquals(bad, LiveAsrUpdate.Started, p.read("""{"event": "started", "model": $bad}"""))
+            assertNull(bad, p.model)
+        }
+    }
+
     // 没送过音频(或太短)时服务端不给终结果,直接回 stopped:当没听清
     @Test fun stoppedWithoutFinalIsEmpty() {
         assertEquals(LiveAsrUpdate.Ended(""), FunAsrProtocol().read("""{"event": "stopped"}"""))

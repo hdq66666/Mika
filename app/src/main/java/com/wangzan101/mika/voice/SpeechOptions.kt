@@ -31,7 +31,7 @@ object SpeechOptions {
         return when (choice) {
             SpeechChoice.Off -> Summary(tr(R.string.models_off), null, false)
             is SpeechChoice.Doubao -> Summary(tr(R.string.speech_doubao_model), tr(R.string.speech_doubao_provider), false)
-            is SpeechChoice.FunAsr -> Summary(tr(R.string.speech_funasr_model), FunAsrProtocol.hostOf(choice.url), false)
+            is SpeechChoice.FunAsr -> Summary(tr(R.string.speech_funasr_model, FunAsrProtocol.family(choice.model)), FunAsrProtocol.hostOf(choice.url), false)
             is SpeechChoice.Bailian -> Summary(
                 choice.model,
                 tr(R.string.speech_bailian_provider) + " · " + tr(if (choice.region == BailianRegion.Singapore) R.string.speech_bailian_singapore else R.string.speech_bailian_beijing),

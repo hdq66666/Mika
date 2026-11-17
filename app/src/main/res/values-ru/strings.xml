@@ -69,7 +69,7 @@
     <string name="speech_doubao_plan">Оплата</string>
     <string name="speech_doubao_duration_note">Оплата за время распознавания</string>
     <string name="speech_doubao_concurrent_note">Оплата за одновременные подключения</string>
-    <string name="speech_funasr_model">Fun-ASR (свой сервер)</string>
+    <string name="speech_funasr_model">%1$s (свой сервер)</string>
     <string name="speech_funasr_setup_hint">Слова появляются по ходу речи: их распознаёт сервер Fun-ASR в реальном времени, который вы запускаете сами (serve_realtime_ws.py из проекта Fun-ASR), обычно в локальной сети. Аккаунт и ключ не нужны.</string>
     <string name="speech_funasr_server">Сервер</string>
     <string name="speech_funasr_address">Адрес</string>

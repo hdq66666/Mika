@@ -149,7 +149,7 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
         // 沿用上次那种(自建或百炼的某个地域);用不了时进设置页
         useFunAsr = {
             when (val last = settings?.lastLive) {
-                is SpeechChoice.FunAsr -> { settings.saveFunAsr(last.url, last.language); vm.pickSpeech(settings.choice.value) }
+                is SpeechChoice.FunAsr -> { settings.saveFunAsr(last.url, last.language, last.model); vm.pickSpeech(settings.choice.value) }
                 is SpeechChoice.Bailian -> { settings.saveBailian("", last); vm.pickSpeech(settings.choice.value) }
                 else -> { liveProbe = LiveProbeUi(); funAsrOpen = true }
             }
@@ -170,8 +170,10 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
                 FunAsrTab.of(ui.speech.takeIf { it is SpeechChoice.FunAsr || it is SpeechChoice.Bailian } ?: funAsrLast), funAsrSaved, liveProbe,
                 onTab = { if (!liveProbe.testing) liveProbe = LiveProbeUi() },
                 onSaveLocal = { url, language ->
-                    probeThen(FunAsrProtocol(language), url, emptyMap()) {
-                        checkNotNull(settings).saveFunAsr(url, language)
+                    // 试连时服务端在「开始」里报了模型就一起记下,行上、卡片上显示用
+                    val protocol = FunAsrProtocol(language)
+                    probeThen(protocol, url, emptyMap()) {
+                        checkNotNull(settings).saveFunAsr(url, language, protocol.model)
                         funAsrDone(); funAsrOpen = false
                     }
                 },
@@ -286,7 +288,7 @@ private fun LiveRows(choice: SpeechChoice, doubao: Boolean, funAsr: Boolean, act
             onPick = { actions.pick(SpeechChoice.Doubao(plan)) }, onOpen = actions.openDoubao,
         )
         val using = when (choice) {
-            is SpeechChoice.FunAsr -> funAsrTabName(FunAsrTab.Local) + " · " + FunAsrProtocol.hostOf(choice.url)
+            is SpeechChoice.FunAsr -> funAsrTabName(FunAsrTab.Local) + " · " + FunAsrProtocol.hostOf(choice.url) + " · " + FunAsrProtocol.modelName(choice.model)
             is SpeechChoice.Bailian -> funAsrTabName(FunAsrTab.of(choice)) + " · " + choice.model
             else -> null
         }
