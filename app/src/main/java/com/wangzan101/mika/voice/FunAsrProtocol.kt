@@ -4,7 +4,6 @@ import java.net.URI
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -23,8 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * 留住的字当作定下的接在句子后面;等服务端把这段放进 `sentences`(或给终结果)就丢掉它。终结果只用服务端的。
  * 每次按住说话用一个新连接,不复用。
  *
- * 这套消息不限于 Fun-ASR 的模型:别的模型(如 Qwen3-ASR)前面放一层说这套消息的服务也一样用。服务端可以在「开始」里
- * 多带一项 `model` 报出模型 id([model]),这里只拿它识别、显示,不因此改变发什么;不带时按 [DEFAULT_MODEL] 算。
+ * 这套消息不限于 Fun-ASR 的模型:别的模型(如 Qwen3-ASR)前面放一层说这套消息的服务,填进同一栏就能用,这里不区分。
  */
 internal class FunAsrProtocol(private val language: AsrLanguage = AsrLanguage.Auto) : LiveAsrProtocol {
     private var final: String? = null
@@ -32,21 +30,13 @@ internal class FunAsrProtocol(private val language: AsrLanguage = AsrLanguage.Au
     /** 当前这段(还没放进 `sentences` 的)到此刻的字。 */
     private val stitch = PartialStitch()
 
-    /** 服务端在「开始」里报的模型 id(经 [cleanModel]);没报、或还没收到「开始」时为 null。 */
-    var model: String? = null
-        private set
-
     override fun opening() = listOfNotNull(language.takeIf { it != AsrLanguage.Auto }?.let { "LANGUAGE:${it.funAsrName}" }, "START")
     override fun closing() = listOf("STOP")
 
     override fun read(message: String): LiveAsrUpdate {
         val root = Json.parseToJsonElement(message).jsonObject
         when (root["event"]?.jsonPrimitive?.contentOrNull) {
-            "started" -> {
-                // 只是拿来显示的一项:类型不对就当没报,不让它把「开始」读坏
-                model = cleanModel((root["model"] as? JsonPrimitive)?.contentOrNull)
-                return LiveAsrUpdate.Started
-            }
+            "started" -> return LiveAsrUpdate.Started
             // 没送过音频时服务端不给终结果、直接回 stopped:当没听清
             "stopped" -> return LiveAsrUpdate.Ended(final ?: "")
             null -> Unit
@@ -74,32 +64,7 @@ internal class FunAsrProtocol(private val language: AsrLanguage = AsrLanguage.Au
     }
 
     companion object {
-        /** 服务端不报模型时按这个算:Fun-ASR 仓库里的实时服务默认跑它。 */
-        const val DEFAULT_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
-
-        /** Qwen3-ASR 的默认模型 id。 */
-        const val QWEN3_ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
-
-        private const val MAX_MODEL = 80
-
-        /** 服务端报的模型 id 要存下来、显示出来:只收字母、数字和 `._/-`,最长 [MAX_MODEL];空的、带别的字符的当没报。 */
-        fun cleanModel(raw: String?): String? = raw?.trim()
-            ?.takeIf { it.length in 1..MAX_MODEL && it.all { c -> (c.code < 128 && c.isLetterOrDigit()) || c in "._/-" } }
-
-        /** 模型 id 去掉前面的组织名;没报过的按 [DEFAULT_MODEL]。 */
-        fun modelName(model: String?): String = (cleanModel(model) ?: DEFAULT_MODEL).substringAfterLast('/')
-
-        /** 界面上叫它什么:认得出是 Qwen3-ASR 或 Fun-ASR 的用这两个名字,别的直接用 [modelName]。 */
-        fun family(model: String?): String {
-            val name = modelName(model)
-            return when {
-                name.contains("qwen3-asr", ignoreCase = true) -> "Qwen3-ASR"
-                name.contains("fun-asr", ignoreCase = true) -> "Fun-ASR"
-                else -> name
-            }
-        }
-
-        /** 自建服务怎么部署(Fun-ASR 的实时服务、Qwen3-ASR + vLLM)写在这份文档里;设置页的「部署说明」打开它。 */
+        /** 自建服务怎么部署(Fun-ASR-Nano 的实时服务、Qwen3-ASR + vLLM)写在这份文档里;设置页的「部署说明」打开它。 */
         const val DEPLOY_GUIDE = "https://github.com/wangzan101/Mika/blob/main/docs/dev/live-asr.md"
 
         /** 服务端默认端口。 */

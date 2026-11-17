@@ -16,7 +16,7 @@ sealed interface SpeechEngineSpec {
     data class System(val onDevice: Boolean) : SpeechEngineSpec
     data class Provider(val provider: com.wangzan101.mika.settings.Provider, val model: String, val method: TranscribeMethod) : SpeechEngineSpec
     data class Doubao(val resourceId: String) : SpeechEngineSpec
-    data class FunAsr(val url: String, val language: AsrLanguage = AsrLanguage.Auto, val model: String = "") : SpeechEngineSpec
+    data class FunAsr(val url: String, val language: AsrLanguage = AsrLanguage.Auto) : SpeechEngineSpec
     data class Bailian(val model: String, val region: BailianRegion, val workspace: String = "", val language: AsrLanguage = AsrLanguage.Auto) : SpeechEngineSpec
     data class Unavailable(val why: Why) : SpeechEngineSpec
     /**
@@ -32,7 +32,7 @@ object SpeechResolver {
         SpeechChoice.Off -> SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.Off)
         is SpeechChoice.Doubao -> if (choice.resourceId in DoubaoProtocol.resources) SpeechEngineSpec.Doubao(choice.resourceId)
             else SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.DoubaoNotConfigured)
-        is SpeechChoice.FunAsr -> SpeechEngineSpec.FunAsr(choice.url, choice.language, choice.model)
+        is SpeechChoice.FunAsr -> SpeechEngineSpec.FunAsr(choice.url, choice.language)
         // 有没有存 Key 由 VoiceInput 开会话时再看(Key 不进选择),这里只按选择给
         is SpeechChoice.Bailian -> SpeechEngineSpec.Bailian(choice.model, choice.region, choice.workspace, choice.language)
         // 自带识别不响应时照实说、指去设置,不悄悄改用要花钱的服务商模型

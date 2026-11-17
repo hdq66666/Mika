@@ -100,7 +100,6 @@ import com.wangzan101.mika.ui.components.floatShadow
 import com.wangzan101.mika.ui.theme.MikaIcons
 import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.MikaType
-import com.wangzan101.mika.voice.FunAsrProtocol
 import com.wangzan101.mika.voice.HoldToTalk
 import com.wangzan101.mika.voice.SpeechEngineSpec
 import com.wangzan101.mika.voice.SpeechFailure
@@ -220,7 +219,7 @@ internal object VoiceCopy {
     /** 卡片顶上的小标签:用的是哪个转文字。 */
     fun engine(spec: SpeechEngineSpec): String = when (spec) {
         is SpeechEngineSpec.Doubao -> tr(R.string.speech_doubao_model)
-        is SpeechEngineSpec.FunAsr -> tr(R.string.speech_funasr_model, FunAsrProtocol.family(spec.model))
+        is SpeechEngineSpec.FunAsr -> tr(R.string.speech_funasr_model)
         is SpeechEngineSpec.Bailian -> spec.model
         is SpeechEngineSpec.System -> tr(if (spec.onDevice) R.string.voice_engine_phone_offline else R.string.voice_engine_phone)
         is SpeechEngineSpec.Provider -> spec.model

@@ -71,7 +71,7 @@ class SpeechPickActions(
     val useDoubao: (String) -> Unit = {},
     val clearDoubao: () -> Unit = {},
     /** 进自建 Fun-ASR、百炼的设置页。 */
-    /** 进「Fun-ASR实时语音识别」的设置页(自建、百炼北京、百炼新加坡三个分页)。 */
+    /** 进「千问实时语音识别」的设置页(自建、百炼北京、百炼新加坡三个分页)。 */
     val openFunAsr: () -> Unit = {},
     /** 沿用上次那种(自建的地址,或百炼某个地域的模型),当场选用。 */
     val useFunAsr: () -> Unit = {},
@@ -89,7 +89,7 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
     var doubaoConfigured by remember { mutableStateOf(settings?.hasDoubaoCredentials == true) }
     // 豆包的设置页叠在这一页上面;返回键先关它
     var doubaoOpen by remember { mutableStateOf(false) }
-    // 「Fun-ASR实时语音识别」三个分页的已存内容;存、删之后重读
+    // 「千问实时语音识别」三个分页的已存内容;存、删之后重读
     fun funAsrSaved() = settings?.let { s ->
         FunAsrSaved(
             s.funAsrUrl, BailianRegion.entries.filter(s::hasBailianKey).toSet(),
@@ -149,7 +149,7 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
         // 沿用上次那种(自建或百炼的某个地域);用不了时进设置页
         useFunAsr = {
             when (val last = settings?.lastLive) {
-                is SpeechChoice.FunAsr -> { settings.saveFunAsr(last.url, last.language, last.model); vm.pickSpeech(settings.choice.value) }
+                is SpeechChoice.FunAsr -> { settings.saveFunAsr(last.url, last.language); vm.pickSpeech(settings.choice.value) }
                 is SpeechChoice.Bailian -> { settings.saveBailian("", last); vm.pickSpeech(settings.choice.value) }
                 else -> { liveProbe = LiveProbeUi(); funAsrOpen = true }
             }
@@ -170,10 +170,8 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
                 FunAsrTab.of(ui.speech.takeIf { it is SpeechChoice.FunAsr || it is SpeechChoice.Bailian } ?: funAsrLast), funAsrSaved, liveProbe,
                 onTab = { if (!liveProbe.testing) liveProbe = LiveProbeUi() },
                 onSaveLocal = { url, language ->
-                    // 试连时服务端在「开始」里报了模型就一起记下,行上、卡片上显示用
-                    val protocol = FunAsrProtocol(language)
-                    probeThen(protocol, url, emptyMap()) {
-                        checkNotNull(settings).saveFunAsr(url, language, protocol.model)
+                    probeThen(FunAsrProtocol(language), url, emptyMap()) {
+                        checkNotNull(settings).saveFunAsr(url, language)
                         funAsrDone(); funAsrOpen = false
                     }
                 },
@@ -271,7 +269,7 @@ fun SpeechModelContent(
 }
 
 /**
- * 「边说边转的语音服务」一组:豆包和「Fun-ASR实时语音识别」(自建服务、百炼北京、百炼新加坡三选一,在它的设置页里分页)各一行。
+ * 「边说边转的语音服务」一组:豆包和「千问实时语音识别」(自建服务、百炼北京、百炼新加坡三选一,在它的设置页里分页)各一行。
  * 没设置过时点行进设置页;设置过以后点圆圈就用它(Fun-ASR 沿用上次那种),右边「设置」进去改或删掉。
  * 凭据和聊天服务商分开存,不列模型、不试转。
  */
@@ -288,7 +286,7 @@ private fun LiveRows(choice: SpeechChoice, doubao: Boolean, funAsr: Boolean, act
             onPick = { actions.pick(SpeechChoice.Doubao(plan)) }, onOpen = actions.openDoubao,
         )
         val using = when (choice) {
-            is SpeechChoice.FunAsr -> funAsrTabName(FunAsrTab.Local) + " · " + FunAsrProtocol.hostOf(choice.url) + " · " + FunAsrProtocol.modelName(choice.model)
+            is SpeechChoice.FunAsr -> funAsrTabName(FunAsrTab.Local) + " · " + FunAsrProtocol.hostOf(choice.url)
             is SpeechChoice.Bailian -> funAsrTabName(FunAsrTab.of(choice)) + " · " + choice.model
             else -> null
         }

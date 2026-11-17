@@ -29,7 +29,6 @@ class LiveSpeechSettingsTest {
             SpeechChoice.FunAsr("ws://192.168.1.10:10095"), SpeechChoice.Bailian(),
             SpeechChoice.Bailian("paraformer-realtime-v2", BailianRegion.Singapore), SpeechChoice.Bailian(workspace = "llm-abc123"),
             SpeechChoice.FunAsr("ws://h:1", AsrLanguage.Japanese), SpeechChoice.Bailian(language = AsrLanguage.Cantonese),
-            SpeechChoice.FunAsr("ws://h:1", model = "Qwen/Qwen3-ASR-1.7B"),
         )) {
             val prefs = MemoryPrefs()
             SpeechSettings(prefs).set(c)
@@ -52,23 +51,6 @@ class LiveSpeechSettingsTest {
     @Test fun unknownLanguageIsAuto() {
         val prefs = MemoryPrefs().also { it.edit().putString("speech_choice", """{"type":"funasr","url":"ws://h:1","language":"xx"}""").apply() }
         assertEquals(SpeechChoice.FunAsr("ws://h:1"), SpeechSettings(prefs).choice.value)
-    }
-
-    // 自建服务的模型 id 是试连时服务端报的:存下来;没报过的旧选择照常读回;存的 id 不合规就当没报,不让整条选择失效
-    @Test fun selfHostedModelIsStoredWhenReported() {
-        val s = SpeechSettings(MemoryPrefs(), cipher())
-        s.saveFunAsr("h", AsrLanguage.Chinese, "Qwen/Qwen3-ASR-1.7B")
-        assertEquals(SpeechChoice.FunAsr("ws://h:10095", AsrLanguage.Chinese, "Qwen/Qwen3-ASR-1.7B"), s.choice.value)
-        assertEquals(s.choice.value, s.lastLive)
-        s.saveFunAsr("h", AsrLanguage.Chinese, null)
-        assertEquals(SpeechChoice.FunAsr("ws://h:10095", AsrLanguage.Chinese), s.choice.value)
-        s.saveFunAsr("h", AsrLanguage.Chinese, "bad model!")
-        assertEquals("", (s.choice.value as SpeechChoice.FunAsr).model)
-
-        val old = MemoryPrefs().also { it.edit().putString("speech_choice", """{"type":"funasr","url":"ws://h:1"}""").apply() }
-        assertEquals(SpeechChoice.FunAsr("ws://h:1"), SpeechSettings(old).choice.value)
-        val bad = MemoryPrefs().also { it.edit().putString("speech_choice", """{"type":"funasr","url":"ws://h:1","model":"<x>"}""").apply() }
-        assertEquals(SpeechChoice.FunAsr("ws://h:1"), SpeechSettings(bad).choice.value)
     }
 
     @Test fun languagesAreRememberedPerTab() {
@@ -145,7 +127,7 @@ class LiveSpeechSettingsTest {
         assertEquals(SpeechChoice.System, s.choice.value)
     }
 
-    // 「Fun-ASR实时语音识别」一行点圆圈时沿用上次那种;那种用不了了就没有
+    // 「千问实时语音识别」一行点圆圈时沿用上次那种;那种用不了了就没有
     @Test fun lastLiveFollowsTheLastSavedKind() {
         val prefs = MemoryPrefs(); val cipher = cipher()
         val s = SpeechSettings(prefs, cipher)
@@ -165,10 +147,6 @@ class LiveSpeechSettingsTest {
         val none = SystemCapability(false, false)
         assertEquals(SpeechEngineSpec.FunAsr("ws://h:1"), SpeechResolver.resolve(SpeechChoice.FunAsr("ws://h:1"), none, emptyList()))
         assertEquals(
-            SpeechEngineSpec.FunAsr("ws://h:1", AsrLanguage.Auto, "Qwen/Qwen3-ASR-1.7B"),
-            SpeechResolver.resolve(SpeechChoice.FunAsr("ws://h:1", model = "Qwen/Qwen3-ASR-1.7B"), none, emptyList()),
-        )
-        assertEquals(
             SpeechEngineSpec.Bailian("fun-asr-realtime", BailianRegion.Beijing, "llm-abc"),
             SpeechResolver.resolve(SpeechChoice.Bailian(workspace = "llm-abc"), SystemCapability(true, true), emptyList()),
         )
@@ -176,12 +154,7 @@ class LiveSpeechSettingsTest {
 
     @Test fun summariesNameTheService() {
         val none = SystemCapability(false, false)
-        assertEquals(SpeechOptions.Summary("Fun-ASR（自建）", "192.168.1.10:10095", false), SpeechOptions.summary(SpeechChoice.FunAsr("ws://192.168.1.10:10095"), none, emptyList()))
-        // 服务端报了模型的,按模型叫;没报的按默认的 Fun-ASR 算
-        assertEquals(
-            SpeechOptions.Summary("Qwen3-ASR（自建）", "192.168.1.10:10095", false),
-            SpeechOptions.summary(SpeechChoice.FunAsr("ws://192.168.1.10:10095", model = "Qwen/Qwen3-ASR-1.7B"), none, emptyList()),
-        )
+        assertEquals(SpeechOptions.Summary("千问（自建）", "192.168.1.10:10095", false), SpeechOptions.summary(SpeechChoice.FunAsr("ws://192.168.1.10:10095"), none, emptyList()))
         assertEquals(SpeechOptions.Summary("fun-asr-realtime", "阿里云百炼 · 北京", false), SpeechOptions.summary(SpeechChoice.Bailian(), none, emptyList()))
         assertEquals(
             SpeechOptions.Summary("paraformer-realtime-v2", "阿里云百炼 · 新加坡", false),

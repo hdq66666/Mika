@@ -75,7 +75,7 @@ internal fun LiveServiceRow(
     )
 }
 
-/** 「Fun-ASR实时语音识别」设置页上的三个分页:自建服务,百炼北京,百炼新加坡。 */
+/** 「千问实时语音识别」设置页上的三个分页:自建服务,百炼北京,百炼新加坡。 */
 enum class FunAsrTab { Local, Beijing, Singapore;
     val region: BailianRegion? get() = when (this) { Local -> null; Beijing -> BailianRegion.Beijing; Singapore -> BailianRegion.Singapore }
 
@@ -135,7 +135,7 @@ private fun LanguagePicker(selected: AsrLanguage, onSelect: (AsrLanguage) -> Uni
 }
 
 /**
- * 「Fun-ASR实时语音识别」的设置页:顶上三个分页并排——自建、百炼·北京、百炼·新加坡,各管各的设置。
+ * 「千问实时语音识别」的设置页:顶上三个分页并排——自建、百炼·北京、百炼·新加坡,各管各的设置。
  * 自建:填服务地址(只写「主机:端口」时按 ws、默认端口补全)。百炼:API Key(各地域一份,已存的不回填,留空沿用)和模型。
  * 「连接并使用」先连一次走一遍开场(不送音频),通了才存下并选用。
  */
