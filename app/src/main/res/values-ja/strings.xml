@@ -70,7 +70,8 @@
     <string name="speech_doubao_duration_note">認識した時間で課金</string>
     <string name="speech_doubao_concurrent_note">同時接続数で課金</string>
     <string name="speech_funasr_model">%1$s（セルフホスト）</string>
-    <string name="speech_funasr_setup_hint">話しながら文字になります。自分で動かしている Fun-ASR リアルタイムサーバー（Fun-ASR プロジェクトの serve_realtime_ws.py、通常はローカルネットワーク内）が認識します。アカウントやキーは不要です。</string>
+    <string name="speech_funasr_setup_hint">話しながら文字になります。自分で動かしているリアルタイム認識サーバー（通常はローカルネットワーク内）が認識します。アカウントやキーは不要です。Fun-ASR-Nano と Qwen3-ASR に対応しています。</string>
+    <string name="speech_funasr_deploy_guide">デプロイ手順</string>
     <string name="speech_funasr_server">サーバー</string>
     <string name="speech_funasr_address">アドレス</string>
     <string name="speech_funasr_enter_address">例: 192.168.1.10:10095</string>

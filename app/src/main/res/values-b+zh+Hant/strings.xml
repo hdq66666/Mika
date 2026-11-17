@@ -70,7 +70,8 @@
     <string name="speech_doubao_duration_note">依辨識時間計費</string>
     <string name="speech_doubao_concurrent_note">依同時連線數計費</string>
     <string name="speech_funasr_model">%1$s（自建）</string>
-    <string name="speech_funasr_setup_hint">邊說邊出字，由你自己部署的 Fun-ASR 即時服務辨識（Fun-ASR 專案裡的 serve_realtime_ws.py），通常在區域網路裡。不需要帳號和金鑰。</string>
+    <string name="speech_funasr_setup_hint">邊說邊出字，由你自己部署的即時辨識服務辨識，通常在區域網路裡。不需要帳號和金鑰。支援 Fun-ASR-Nano 和 Qwen3-ASR。</string>
+    <string name="speech_funasr_deploy_guide">部署說明</string>
     <string name="speech_funasr_server">服務</string>
     <string name="speech_funasr_address">位址</string>
     <string name="speech_funasr_enter_address">例如 192.168.1.10:10095</string>

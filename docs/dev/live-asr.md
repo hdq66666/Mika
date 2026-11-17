@@ -4,12 +4,19 @@
 
 设置 › 模型 › 语音转文字里「边说边转的语音服务」一组，豆包下面一行「Fun-ASR实时语音识别」。它的设置页（`app/ui/LiveSpeechSetup.kt`）顶上三个分页并排：「自建」「百炼·北京」「百炼·新加坡」，各管各的设置，打开时停在正在用（或上次用）的那个（`FunAsrTab.of`）。没设置过时点这一行进设置页；设置过以后点圆圈就沿用上次那种（`SpeechSettings.lastLive`：自建的地址，或百炼某个地域的模型和业务空间；那种用不了了就进设置页），右边「设置」进去改。行上第二行写正在用的是哪种，如「自建 · 192.168.1.10:10095」「百炼·北京 · fun-asr-realtime」。
 
-- **自建**：填服务地址。只写「主机」或「主机:端口」时按 `ws://` 补全，没写端口补 10095（Fun-ASR 仓库里 serve_realtime_ws.py 的默认端口）；`http(s)://` 换成 `ws(s)://`，带账号密码的地址不收（`FunAsrProtocol.normalize`）。地址不是密钥，存在选择 JSON 里（`SpeechChoice.FunAsr`），另记一份（`SpeechSettings.funAsrUrl`），换去别的再回来时预填。
+- **自建**：页上写明支持 Fun-ASR-Nano 和 Qwen3-ASR，下面一行「部署说明」打开本文档（`FunAsrProtocol.DEPLOY_GUIDE`），两种模型各怎么部署见下面「部署自建服务」。填服务地址。只写「主机」或「主机:端口」时按 `ws://` 补全，没写端口补 10095（Fun-ASR 仓库里 serve_realtime_ws.py 的默认端口）；`http(s)://` 换成 `ws(s)://`，带账号密码的地址不收（`FunAsrProtocol.normalize`）。地址不是密钥，存在选择 JSON 里（`SpeechChoice.FunAsr`），另记一份（`SpeechSettings.funAsrUrl`），换去别的再回来时预填。
 - **百炼·北京 / 百炼·新加坡**：北京和新加坡的 API Key 不通用，每个地域各存一份 Key、上次的模型和业务空间 ID。Key 用 `KeyCipher` 加密单独存（和豆包凭据同一个 Keystore alias、不同的键），不回填；已存时留空沿用，只换模型或业务空间。模型列出 `fun-asr-realtime`（默认）、`paraformer-realtime-v2`、`qwen-audio-3.1-asr-flash-message`，也能手填同一套 run-task 协议的别的模型（只收字母、数字和 `.-_`）。业务空间 ID 可选：填了连它的专属接入点 `wss://<业务空间>.<地域>.maas.aliyuncs.com/api-ws/v1/inference`（地域段是 `cn-beijing` 或 `ap-southeast-1`，文档推荐），不填连通用接入点 `dashscope.aliyuncs.com` / `dashscope-intl.aliyuncs.com`（仍可用）；ID 去掉空白转小写，没带 `llm-` 前缀时补上（控制台里的 ID 以它开头），只收字母、数字和连字符（拼进主机名，`BailianProtocol.workspace`），页上写出这次会连的地址。选择 JSON 只有模型、地域和业务空间 ID（`SpeechChoice.Bailian`）。删除某个地域的 Key 时，正在用这个地域就关掉语音输入。
 
 三个分页都有「识别语言」一组（`AsrLanguage`）：自动（默认，不指定，由服务自己判断）、中文、英语、日语、粤语、韩语，各分页各记一份，存进选择 JSON 的 `language`（不认识的代码当自动，不让整条选择失效）。自建服务能识别哪些语言取决于它跑的模型（Fun-ASR-Nano 只有中、英、日及中文方言，多语种版本和 Qwen3-ASR 更多）。
 
 三个分页的「连接并使用」都先试连一次（`probeLiveAsr`）：连上、发开场消息，服务端回了「开始」（地址、鉴权、模型都认）就算通，随后发收尾消息断开，才存下并选用。试连不送音频，不产生识别时长；不等服务端对空识别的收尾回应。没通时页上写原因（`SpeechOptions.probeFailure`：Key 被拒、服务拒绝了请求（只带错误码）、连不上），不显示服务端原话。
+
+## 部署自建服务
+
+App 只要求服务说下面「自建 Fun-ASR 的消息」那套 WebSocket 消息，在手机够得着的地址上（通常是局域网里的一台带显卡的机器），不需要账号和密钥。
+
+- **Fun-ASR-Nano**：用 [Fun-ASR 仓库](https://github.com/FunAudioLLM/Fun-ASR)里的 serve_realtime_ws.py 直接起服务（默认模型 FunAudioLLM/Fun-ASR-Nano-2512，默认端口 10095），照它的 docs/realtime_demo.md 装环境。App 里填「主机:10095」。
+- **Qwen3-ASR**：没有现成的同协议服务，需要自己在 vLLM 前面放一层前端，做法、参数和实测数字见下面「自建服务换别的模型（Qwen3-ASR + vLLM）」。前端在 `started` 里带上 `model`，App 就会显示成 Qwen3-ASR。
 
 ## 实时路径
 

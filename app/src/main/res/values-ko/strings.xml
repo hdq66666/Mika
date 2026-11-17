@@ -70,7 +70,8 @@
     <string name="speech_doubao_duration_note">인식한 시간만큼 과금</string>
     <string name="speech_doubao_concurrent_note">동시 연결 수만큼 과금</string>
     <string name="speech_funasr_model">%1$s (직접 운영)</string>
-    <string name="speech_funasr_setup_hint">말하는 동안 글자가 나타납니다. 직접 운영하는 Fun-ASR 실시간 서버(Fun-ASR 프로젝트의 serve_realtime_ws.py, 보통 로컬 네트워크)가 인식합니다. 계정이나 키가 필요 없습니다.</string>
+    <string name="speech_funasr_setup_hint">말하는 동안 글자가 나타납니다. 직접 운영하는 실시간 인식 서버(보통 로컬 네트워크)가 인식합니다. 계정이나 키가 필요 없습니다. Fun-ASR-Nano와 Qwen3-ASR을 지원합니다.</string>
+    <string name="speech_funasr_deploy_guide">배포 안내</string>
     <string name="speech_funasr_server">서버</string>
     <string name="speech_funasr_address">주소</string>
     <string name="speech_funasr_enter_address">예: 192.168.1.10:10095</string>

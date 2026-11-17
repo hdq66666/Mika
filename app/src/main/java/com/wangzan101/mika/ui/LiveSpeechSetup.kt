@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -175,6 +176,14 @@ private fun LocalFunAsr(savedUrl: String?, savedLanguage: AsrLanguage, probe: Li
     var language by remember { mutableStateOf(savedLanguage) }
     val url = FunAsrProtocol.normalize(address)
     Text(tr(R.string.speech_funasr_setup_hint), Modifier.padding(top = 4.dp, bottom = 4.dp), fontSize = 14.5.sp, lineHeight = 22.sp, color = c.ink2)
+    // 两种模型各怎么部署写在仓库文档里;没有能打开网页的应用时 openUri 会抛错,这时什么都不做
+    val uri = LocalUriHandler.current
+    Text(
+        tr(R.string.speech_funasr_deploy_guide),
+        Modifier.clip(MikaShapes.Pill).clickable { runCatching { uri.openUri(FunAsrProtocol.DEPLOY_GUIDE) } }
+            .padding(vertical = 6.dp).testTag("speech-funasr-guide"),
+        style = MikaType.Body, color = c.accent,
+    )
     GroupLabel(tr(R.string.speech_funasr_server))
     GroupCard {
         InputRow(

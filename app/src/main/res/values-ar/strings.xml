@@ -70,7 +70,8 @@
     <string name="speech_doubao_duration_note">تُحتسب الرسوم بحسب مدة التعرّف</string>
     <string name="speech_doubao_concurrent_note">تُحتسب الرسوم بحسب الاتصالات المتزامنة</string>
     <string name="speech_funasr_model">%1$s (استضافة ذاتية)</string>
-    <string name="speech_funasr_setup_hint">تظهر الكلمات أثناء حديثك، ويتعرّف عليها خادم Fun-ASR فوري تشغّله بنفسك (serve_realtime_ws.py من مشروع Fun-ASR)، عادةً على شبكتك المحلية. لا حاجة إلى حساب أو مفتاح.</string>
+    <string name="speech_funasr_setup_hint">تظهر الكلمات أثناء حديثك، ويتعرّف عليها خادم فوري تشغّله بنفسك، عادةً على شبكتك المحلية. لا حاجة إلى حساب أو مفتاح. يدعم Fun-ASR-Nano و Qwen3-ASR.</string>
+    <string name="speech_funasr_deploy_guide">دليل النشر</string>
     <string name="speech_funasr_server">الخادم</string>
     <string name="speech_funasr_address">العنوان</string>
     <string name="speech_funasr_enter_address">مثال: 192.168.1.10:10095</string>

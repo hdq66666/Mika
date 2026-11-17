@@ -71,7 +71,8 @@
     <string name="speech_doubao_duration_note">محاسبهٔ هزینه بر اساس مدت تشخیص</string>
     <string name="speech_doubao_concurrent_note">محاسبهٔ هزینه بر اساس اتصال‌های هم‌زمان</string>
     <string name="speech_funasr_model">%1$s (میزبانی شخصی)</string>
-    <string name="speech_funasr_setup_hint">کلمات هنگام صحبت نمایش داده می‌شوند و سرور بلادرنگ Fun-ASR که خودتان اجرا می‌کنید (فایل serve_realtime_ws.py از پروژهٔ Fun-ASR)، معمولاً در شبکهٔ محلی، آن‌ها را تشخیص می‌دهد. حساب یا کلید لازم نیست.</string>
+    <string name="speech_funasr_setup_hint">کلمات هنگام صحبت نمایش داده می‌شوند و سرور بلادرنگی که خودتان اجرا می‌کنید، معمولاً در شبکهٔ محلی، آن‌ها را تشخیص می‌دهد. حساب یا کلید لازم نیست. از Fun-ASR-Nano و Qwen3-ASR پشتیبانی می‌کند.</string>
+    <string name="speech_funasr_deploy_guide">راهنمای استقرار</string>
     <string name="speech_funasr_server">سرور</string>
     <string name="speech_funasr_address">نشانی</string>
     <string name="speech_funasr_enter_address">مثلاً 192.168.1.10:10095</string>

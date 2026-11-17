@@ -151,6 +151,12 @@ class FunAsrProtocolTest {
         }
     }
 
+    // 设置页「部署说明」打开的是仓库里这份文档:挪了文档要一起改
+    @Test fun deployGuidePointsAtADocInThisRepo() {
+        val path = FunAsrProtocol.DEPLOY_GUIDE.substringAfter("/blob/main/", "")
+        assertTrue(path, path.isNotEmpty() && java.io.File("..", path).isFile)
+    }
+
     // 没送过音频(或太短)时服务端不给终结果,直接回 stopped:当没听清
     @Test fun stoppedWithoutFinalIsEmpty() {
         assertEquals(LiveAsrUpdate.Ended(""), FunAsrProtocol().read("""{"event": "stopped"}"""))
