@@ -1,5 +1,6 @@
 package com.wangzan101.mika.calls
 
+import com.wangzan101.mika.settings.ModelOptions
 import java.util.Base64
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -20,7 +21,9 @@ data class VolcRealtimeConfig(
     init {
         require(systemPrompt.length <= MAX_PROMPT_CHARS) { "Realtime system prompt is too long" }
         require(speaker.isNotBlank() && speaker.length <= 128) { "Invalid realtime speaker" }
-        require(model.isNotBlank() && model.length <= 128 && model.all { it.code in 33..126 }) { "Invalid realtime model" }
+        require(model.isNotBlank() && model.length <= 128 && model.all { it.code in 33..126 } && !ModelOptions.isTtsOnly(model)) {
+            "Invalid realtime model"
+        }
     }
 
     companion object {

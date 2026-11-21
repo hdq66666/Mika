@@ -47,7 +47,7 @@ object ModelOptions {
             visionKnown = m.vision != null,
             contextKnown = m.contextTokens != null,
             displayName = m.displayName,
-            chat = m.chat,
+            chat = if (m.hasDedicatedChatEndpoint) true else m.chat,
         )
     }.sortedBy { if (it.canBeMain) 0 else 1 }
 
@@ -88,6 +88,34 @@ object ModelOptions {
         "embed", "rerank", "tts", "whisper", "transcribe", "speech", "audio", "realtime", "image", "dall", "moderation", "ocr", "asr",
     )
 
+    fun isTtsOnly(model: String, listed: ListedModel? = null): Boolean {
+        if (listed?.hasDedicatedChatEndpoint == true) return false
+        if (listed?.speechOnly == true) return true
+        if (listed?.chat == true) return false
+        if (listed?.unsupportedApis?.any(::isSpeechApi) == true && listed.protocols.isNullOrEmpty()) return true
+        val id = model.trim().lowercase()
+        val parts = id.split(MODEL_ID_SEPARATOR)
+        return "tts" in parts || "text-to-speech" in id || parts.any { it in TTS_FAMILIES } ||
+            id.startsWith("fishaudio/drama-") || id.startsWith("fish-audio/drama-")
+    }
+
+    fun isTtsOnly(provider: Provider, model: String): Boolean {
+        val id = model.trim()
+        return id in provider.ttsModels || isTtsOnly(id, provider.models?.firstOrNull { it.id == id })
+    }
+
+    fun canUseForChat(provider: Provider, model: String): Boolean =
+        model.isNotBlank() && !isTtsOnly(provider, model)
+
+    /** 只有已知 TTS 模型的服务商从其他用途隐藏。完全没有已知模型时仍可手填。 */
+    fun mayHaveNonTtsModels(provider: Provider): Boolean {
+        val known = provider.models.orEmpty().associateBy { it.id }
+        val unlisted = (provider.typedModels + provider.verifiedModels) - known.keys
+        if (known.isEmpty() && unlisted.isEmpty() && provider.ttsModels.isEmpty()) return true
+        return known.values.any { it.id !in provider.ttsModels && !isTtsOnly(it.id, it) } ||
+            unlisted.any { it !in provider.ttsModels && !isTtsOnly(it) }
+    }
+
     /** 上下文长度的短写:64K、1M。 */
     fun contextLabel(tokens: Int): String = when {
         tokens >= 1_000_000 && tokens % 1_000_000 < 50_000 -> "${tokens / 1_000_000}M"
@@ -111,11 +139,19 @@ object ModelOptions {
      * 服务商详情可通过 [includeTts] 显示只提供合成接口的模型和用户保存的 TTS 模型。
      * 用户说过能不能看图的([Provider.visionOverrides])按用户说的。
      */
-    fun ofProvider(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean = false): List<ModelOption> =
-        listedOf(p, configs, includeTts).map { o ->
-            val said = p.visionOverrides[o.id] ?: return@map o
+    fun ofProvider(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean = false): List<ModelOption> {
+        val catalog = p.models.orEmpty().associateBy { it.id }
+        return listedOf(p, configs, includeTts).mapNotNull { o ->
+            val tts = o.id in p.ttsModels || isTtsOnly(o.id, catalog[o.id])
+            if (tts && !includeTts) return@mapNotNull null
+            if (tts) return@mapNotNull o.copy(
+                capabilities = o.capabilities.copy(toolCalls = false, vision = false, reasoning = false),
+                toolCallsKnown = false, visionKnown = false, chat = false, visionByUser = null,
+            )
+            val said = p.visionOverrides[o.id] ?: return@mapNotNull o
             o.copy(capabilities = o.capabilities.copy(vision = said), visionByUser = said)
         }
+    }
 
     private fun listedOf(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean): List<ModelOption> {
         val saved = configs.filter { it.providerId == p.id }
@@ -131,7 +167,7 @@ object ModelOptions {
         val knownIds = options.mapTo(mutableSetOf()) { it.id }
         val tts = if (includeTts) {
             val catalog = p.models.orEmpty()
-            val speechOnly = catalog.filter { !it.usable && it.unsupportedApis.any(::isSpeechApi) }
+            val speechOnly = catalog.filter { !it.usable && isTtsOnly(it.id, it) }
             val voiceModels = (speechOnly.map { it.id } + p.ttsModels).filter(knownIds::add)
             val titles = catalog.associate { it.id to it.displayName }
             val speechBase = base.copy(toolCalls = false, vision = false, reasoning = false)
@@ -154,6 +190,8 @@ object ModelOptions {
     }
 
     private val SPEECH_APIS = setOf("speech", "audio-speech", "text-to-speech", "tts", TtsProtocol.OpenAiSpeech.wire, TtsProtocol.GeminiTts.wire)
+    private val MODEL_ID_SEPARATOR = Regex("[^a-z0-9]+")
+    private val TTS_FAMILIES = setOf("fishspeech", "indextts", "kokoro", "cosyvoice")
 }
 
 /**

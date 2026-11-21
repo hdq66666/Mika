@@ -20,6 +20,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wangzan101.mika.calls.*
 import com.wangzan101.mika.calls.briefing.*
+import com.wangzan101.mika.settings.ModelOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -95,6 +96,10 @@ internal fun rememberCallVoiceBriefing(
     return VoiceBriefingLauncher(starting || voice.active) { number, simId, simLabel ->
         if (!currentAllowed || starting || voice.active) return@VoiceBriefingLauncher
         open = true; detail = null; label = "$number · $simLabel"
+        if (ModelOptions.isTtsOnly(profile.model)) {
+            detail = context.getString(R.string.model_tts_only_not_supported)
+            return@VoiceBriefingLauncher
+        }
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.RECORD_AUDIO)
         } else {

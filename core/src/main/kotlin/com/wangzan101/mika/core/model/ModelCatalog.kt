@@ -44,9 +44,18 @@ data class ListedModel(
      * `/messages`);null 表示没说。用不在其中的接口类型调用必然失败,见 [ModelProtocol.ofPath]。
      */
     val protocols: List<ModelProtocol>? = null,
+    /** 模型目录明确声明此模型只提供语音合成。 */
+    val speechOnly: Boolean = false,
 ) {
     val usable: Boolean get() = endpoint != null || unsupportedApis.isEmpty()
+
+    /** generateContent 同时用于对话和语音合成，单凭这个接口无法确定用途。 */
+    val hasDedicatedChatEndpoint: Boolean get() = declaresChatEndpoint(endpoint, protocols)
 }
+
+private fun declaresChatEndpoint(endpoint: ModelEndpoint?, protocols: List<ModelProtocol>?): Boolean =
+    endpoint?.protocol?.let { it != ModelProtocol.GenerateContent } == true ||
+        protocols.orEmpty().any { it != ModelProtocol.GenerateContent }
 
 /** 模型列表里 `api` 表认得的接口协议;[wire] 是表里的键名。 */
 enum class ModelProtocol(val wire: String) {
@@ -233,10 +242,11 @@ class ModelCatalog(private val http: OkHttpClient) {
         }?.distinct()
         val api = o.obj("api")
         // 有的聚合服务不给 `api` 表,改用 `supported_endpoints` 写这个模型能走哪几个端点
-        val protocols = (o["supported_endpoints"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(ModelProtocol::ofPath) }
-            ?.distinct()
-            ?.takeIf { it.isNotEmpty() }
+        val supportedEndpoints = (o["supported_endpoints"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+        val protocols = supportedEndpoints.mapNotNull(ModelProtocol::ofPath)
+            .distinct()
+            .takeIf { it.isNotEmpty() }
         // 一个模型可能写了几种协议:按 Chat Completions、Messages、generateContent、Responses 的次序取第一种会说的
         val endpoint = api?.let { a ->
             ModelProtocol.entries.firstNotNullOfOrNull { p ->
@@ -245,6 +255,13 @@ class ModelCatalog(private val http: OkHttpClient) {
                 ModelEndpoint(p, url, e.obj("compatibility")?.str("reasoning_field"))
             }
         }
+        val type = o.str("type")?.lowercase()
+        val speechEndpointOnly = endpoint == null && protocols == null && supportedEndpoints.any {
+            val path = it.trim().trimEnd('/').lowercase()
+            path == "audio/speech" || path.endsWith("/audio/speech")
+        }
+        val audioOutputOnly = !outputs.isNullOrEmpty() && outputs.all { it == "audio" || it.startsWith("audio/") }
+        val textInput = (inputs ?: modalIn ?: modality?.split('+'))?.contains("text") == true
         return ListedModel(
             id = id,
             displayName = (o.str("name") ?: o.str("display_name")).orEmpty(),
@@ -260,12 +277,14 @@ class ModelCatalog(private val http: OkHttpClient) {
             reasoningEfforts = efforts,
             unsupportedApis = if (endpoint == null) api?.keys?.toList().orEmpty() else emptyList(),
             protocols = protocols,
-            chat = when (o.str("type")?.lowercase()) {
+            chat = when (type) {
                 in CHAT_TYPES -> true
                 in NON_CHAT_TYPES -> false
                 // 只出图、出声音的不是对话模型;出文字的不另记
                 else -> outputs?.takeIf { "text" !in it }?.let { false }
             },
+            speechOnly = !declaresChatEndpoint(endpoint, protocols) && (type in SPEECH_ONLY_TYPES || speechEndpointOnly ||
+                (type !in CHAT_TYPES && audioOutputOnly && textInput)),
         )
     }
 
@@ -430,6 +449,7 @@ class ModelCatalog(private val http: OkHttpClient) {
         val EFFORT_ORDER = listOf("low", "medium", "high", "xhigh", "max")
         /** 列表里 `type` 一项的写法:是对话模型的,和不是的(向量、重排、画图、语音、审核)。 */
         val CHAT_TYPES = setOf("chat", "llm", "language", "text", "vlm", "code")
+        private val SPEECH_ONLY_TYPES = setOf("tts", "text-to-speech", "text_to_speech")
         val NON_CHAT_TYPES = setOf(
             "embedding", "embeddings", "rerank", "reranker", "image", "images", "video", "audio", "tts", "stt", "asr",
             "speech", "transcription", "moderation",

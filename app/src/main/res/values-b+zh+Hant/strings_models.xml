@@ -47,7 +47,7 @@
     <string name="models_models">模型</string>
     <string name="models_models_note">點按一個模型，選擇它的用途。</string>
     <string name="models_no_list_note">這家服務商未傳回模型列表。請在上方輸入服務商文件中的模型 ID。</string>
-    <string name="models_untested_note">這家是跳過測試存下的，還不知道能不能用。選一個模型時會先試呼叫，也可以點右上角重新整理列出它的模型。</string>
+    <string name="models_untested_note">這家服務商尚未測試。點一下右上角的重新整理按鈕可取得模型列表。</string>
     <string name="models_not_listed">還沒列出這家的模型。</string>
     <string name="refresh">重新整理</string>
     <string name="models_in_use">正在用這個</string>
@@ -130,8 +130,11 @@
     <string name="chatgpt_page_back">回到 Mika</string>
     <string name="chatgpt_no_browser">沒有找到可以用來登入的瀏覽器。</string>
     <string name="models_unverified">沒測試通過，任務可能會失敗</string>
-    <string name="models_unverified_note">這家不提供模型列表，在用的 %1$s 還沒測試通過，任務可能會失敗。點「重新測試」用它試呼叫一次。</string>
+    <string name="models_unverified_note">正在使用的 %1$s 尚未通過測試。點一下對應模型的測試按鈕即可單獨驗證。</string>
     <string name="models_retest">重新測試</string>
+    <string name="models_retest_model">測試 %1$s</string>
+    <string name="models_retest_confirm_title">測試模型？</string>
+    <string name="models_retest_confirm_body">Mika 將向服務商 %2$s 的模型 %1$s 送出一次工具呼叫測試請求。</string>
 
     <string name="account_signin_copied">已複製</string>
     <string name="account_signin_notif_title">正在登入帳號</string>

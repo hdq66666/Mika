@@ -68,7 +68,7 @@ fun VoiceModelScreen(store: ProviderStore, onBack: () -> Unit) {
     if (picking) {
         val configs by store.configs.collectAsState()
         BackHandler { picking = false }
-        Page(tr(R.string.voice_model_name), onBack = { picking = false }) {
+        Page(tr(R.string.role_tts), onBack = { picking = false }) {
             if (ttsProviders.isEmpty()) {
                 FooterNote(tr(if (providers.isEmpty()) R.string.voice_no_providers else R.string.voice_no_tts_models))
             } else {
@@ -106,8 +106,7 @@ fun VoiceModelScreen(store: ProviderStore, onBack: () -> Unit) {
         GroupCard(Modifier.padding(top = 12.dp)) {
             RoleCard(
                 ModelsCopy.VOICE_ICON, tr(R.string.voice_provider),
-                if (choice == null) ModelsCopy.RoleLine(ModelsCopy.UNSET, "", unset = true)
-                else ModelsCopy.RoleLine(choice.model, selectedProvider?.let(ModelsCopy::providerName).orEmpty(), isModel = true),
+                ModelsCopy.voiceLine(ttsProviders, choice),
                 first = true, tag = "voice-model-pick",
             ) {
                 player.stop()

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.KeyCipher
+import com.wangzan101.mika.settings.ModelOptions
 import com.wangzan101.mika.settings.KeystoreKeyCipher
 import java.util.Base64
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,6 +120,7 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
     /** 加密存下这个地域的百炼 API Key 并选用;[apiKey] 为空时沿用这个地域已存的(只换模型)。不联网。 */
     internal fun saveBailian(apiKey: String, choice: SpeechChoice.Bailian) {
         require(BailianProtocol.validModel(choice.model) && BailianProtocol.workspace(choice.workspace) == choice.workspace)
+        require(!ModelOptions.isTtsOnly(choice.model)) { "This model is only available for text-to-speech." }
         val edit = prefs.edit()
         if (apiKey.isNotBlank()) {
             val encrypted = Base64.getEncoder().encodeToString(cipher.encrypt(apiKey.trim().toByteArray(Charsets.UTF_8)))
@@ -162,7 +164,7 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
         val stored = prefs.getString(LIVE_LAST, null)?.let { decode(Json.parseToJsonElement(it).jsonObject) } ?: _choice.value
         when (val c = stored) {
             is SpeechChoice.FunAsr -> c
-            is SpeechChoice.Bailian -> c.takeIf { hasBailianKey(it.region) }
+            is SpeechChoice.Bailian -> c.takeIf { hasBailianKey(it.region) && !ModelOptions.isTtsOnly(it.model) }
             else -> null
         }
     }.getOrNull()

@@ -326,7 +326,7 @@ sealed interface ProbeResult {
  *
  * 用户只管两层:连了哪些服务商、每个用途([RoleChoices])用哪个模型。模型配置([ProviderConfig])是内部的一层:
  * 选模型时当场建,没有用途再用它就删掉(见 [prune];Key 按服务商存,删配置不动 Key)。
- * 用途选什么就是什么,不看能力标记;选具体模型时把对应标记记为 true(见 [choose])。
+ * 对话用途只接受非 TTS 模型;选具体模型时把对应的能力标记记为 true(见 [choose])。
  *
  * 旧版本的文件:只有模型配置、Key 按配置 id 存的,读入时按 [ProviderConnection.keyOf] 归成服务商,
  * Key 取那组里任一条的,原来按配置 id 存的 Key 清掉(见 [migrate]);用途只记了显式指定的,
@@ -399,6 +399,9 @@ class ProviderStore(
 
     fun provider(id: String): Provider? = _providers.value.firstOrNull { it.id == id }
 
+    private fun ProviderConfig.canUseForChat(): Boolean =
+        provider(providerId)?.let { ModelOptions.canUseForChat(it, model) } == true
+
     /**
      * 新增或替换同 id 的模型配置(新增的要再交给 [choose],否则下次读入时没人用会被删掉)。
      * 配置挂到 [ProviderConfig.providerId] 指的服务商下(接口类型、地址、名字以服务商的为准);
@@ -412,6 +415,7 @@ class ProviderStore(
         val list = _configs.value
         val i = list.indexOfFirst { it.id == cfg.id }
         _configs.value = if (i >= 0) list.toMutableList().also { it[i] = attached } else list + attached
+        if (!attached.canUseForChat() && attached.id in _roles.value.referenced) pruneIneligibleChatChoices()
         if (apiKey != null) setKey(p.id, apiKey)
         writeConfig()
     }
@@ -499,6 +503,7 @@ class ProviderStore(
             savedUntested = untested && verified.isEmpty() && found.verifiedModels.isEmpty() && listed.isEmpty(),
         )
         _providers.value = _providers.value.map { if (it.id == p.id) p else it }
+        pruneIneligibleChatChoices()
         repairUnavailableReasoningEfforts()
         if (apiKey != null) setKey(p.id, apiKey)
         writeConfig()
@@ -512,6 +517,7 @@ class ProviderStore(
         _providers.value = _providers.value.map {
             if (it.id == providerId) it.copy(models = models, savedUntested = false) else it
         }
+        pruneIneligibleChatChoices()
         repairUnavailableReasoningEfforts()
         writeConfig()
     }
@@ -572,19 +578,21 @@ class ProviderStore(
     @Synchronized
     fun use(role: ModelRole, providerId: String, model: String, caps: Capabilities): Boolean {
         val p = provider(providerId) ?: return false
-        val id = _configs.value.firstOrNull { it.providerId == p.id && it.model == model }?.id
-            ?: newId().also { save(ProviderConfig(it, p.kind, p.baseUrl, model, caps, p.name, p.id), null) }
+        val name = model.trim()
+        if (!ModelOptions.canUseForChat(p, name)) return false
+        val id = _configs.value.firstOrNull { it.providerId == p.id && it.model == name }?.id
+            ?: newId().also { save(ProviderConfig(it, p.kind, p.baseUrl, name, caps, p.name, p.id), null) }
         return choose(role, RoleChoice.Model(id))
     }
 
     /**
      * 定一个用途:用户选什么就是什么,不看能力标记。选具体模型当主模型时把工具调用标记记为 true(运行时据此发工具定义);
      * 看图标记不改存着的,在 [configFor] 里按当下的选择推出来,换走了就跟着回去。之后没人用的配置删掉。
-     * 配置不存在、或这个用途不接受这种选择(见 [RoleChoices.with])时返回 false。
+     * 配置不存在、标为 TTS 或这个用途不接受这种选择(见 [RoleChoices.with])时返回 false。
      */
     @Synchronized
     fun choose(role: ModelRole, choice: RoleChoice): Boolean {
-        if (choice is RoleChoice.Model && _configs.value.none { it.id == choice.configId }) return false
+        if (choice is RoleChoice.Model && configById(choice.configId)?.canUseForChat() != true) return false
         val next = _roles.value.with(role, choice) ?: return false
         if (choice is RoleChoice.Model) {
             _configs.value = _configs.value.map { c ->
@@ -607,7 +615,9 @@ class ProviderStore(
     @Synchronized
     fun ensureConfigId(providerId: String, model: String, caps: Capabilities): String? {
         val p = provider(providerId) ?: return null
-        val existing = _configs.value.firstOrNull { it.providerId == p.id && it.model == model }
+        val name = model.trim()
+        if (!ModelOptions.canUseForChat(p, name)) return null
+        val existing = _configs.value.firstOrNull { it.providerId == p.id && it.model == name }
         if (existing != null) {
             if (!existing.capabilities.toolCalls) {
                 _configs.value = _configs.value.map { c ->
@@ -618,7 +628,7 @@ class ProviderStore(
             return existing.id
         }
         val id = newId()
-        save(ProviderConfig(id, p.kind, p.baseUrl, model, caps.copy(toolCalls = true), p.name, p.id), null)
+        save(ProviderConfig(id, p.kind, p.baseUrl, name, caps.copy(toolCalls = true), p.name, p.id), null)
         return id
     }
 
@@ -646,7 +656,7 @@ class ProviderStore(
     @Synchronized
     fun setFallback(role: ModelRole, slot: Int, configId: String?): Boolean {
         if (slot < 0 || slot >= MAX_FALLBACKS) return false
-        if (configId != null && _configs.value.none { it.id == configId }) return false
+        if (configId != null && configById(configId)?.canUseForChat() != true) return false
         val current = _roles.value.fallbacks(role)
         val next = when {
             configId == null -> if (slot in current.indices) current.toMutableList().apply { removeAt(slot) } else return true
@@ -733,12 +743,18 @@ class ProviderStore(
         val models = if (enabled) p.ttsModels + id else p.ttsModels - id
         if (models == p.ttsModels) return true
         val updated = _providers.value.map { if (it.id == providerId) it.copy(ttsModels = models) else it }
+        val removedIds = if (enabled) _configs.value.filter { it.providerId == p.id && it.model.trim() == id }.mapTo(hashSetOf()) { it.id }
+            else emptySet()
+        val configs = _configs.value.filterNot { it.id in removedIds }
+        val roles = if (removedIds.isEmpty()) _roles.value else _roles.value.keepOnly(configs.mapTo(hashSetOf()) { it.id })
         try {
-            writeAtomically(configFile, configJson(updated))
+            writeAtomically(configFile, configJson(updated, configs, roles))
         } catch (_: Exception) {
             return false
         }
         _providers.value = updated
+        _roles.value = roles
+        _configs.value = configs
         return true
     }
 
@@ -760,6 +776,7 @@ class ProviderStore(
     fun configFor(role: ModelRole): ProviderConfig? {
         val choices = _roles.value
         val cfg = choices.resolve(role)?.let { id -> _configs.value.firstOrNull { it.id == id } } ?: return null
+        if (!cfg.canUseForChat()) return null
         val sees = role == ModelRole.Vision || ModelOptions.seesImages(cfg.capabilities.vision,
             provider(cfg.providerId)?.visionOverrides?.get(cfg.model), usedForVision = choices.resolve(ModelRole.Vision) == cfg.id)
         return if (sees == cfg.capabilities.vision) cfg else cfg.copy(capabilities = cfg.capabilities.copy(vision = sees))
@@ -871,6 +888,7 @@ class ProviderStore(
      */
     fun modelForRoleConfig(role: ModelRole, configId: String, session: ModelSession = ModelSession.fresh()): ChatModel? {
         val raw = configById(configId) ?: return null
+        if (!raw.canUseForChat()) return null
         val p = provider(raw.providerId)
         val source = UsageSource(raw.providerId, p?.name ?: raw.name, raw.model, UsagePurpose.of(role))
         val listed = listedOf(raw)
@@ -1036,6 +1054,7 @@ class ProviderStore(
      */
     fun imageModel(choice: ImageChoice, capabilities: ImageCapabilities): ImageModel? {
         val p = provider(choice.providerId) ?: return null
+        if (choice.model.isBlank() || ModelOptions.isTtsOnly(p, choice.model)) return null
         val client = modelHttp.newBuilder().readTimeout(180, TimeUnit.SECONDS).build()
         val header = headers(p.sessionHeader, ModelSession.fresh())
         val key = providerKey(p.id)
@@ -1053,10 +1072,12 @@ class ProviderStore(
      */
     suspend fun probe(
         kind: ProviderConfig.Kind, baseUrl: String, apiKey: String?, sessionHeader: String?,
-        model: String, endpoint: ModelEndpoint?, caps: Capabilities,
+        model: String, endpoint: ModelEndpoint?, caps: Capabilities, listed: ListedModel? = null,
+        providerId: String = "",
     ): ProbeResult {
+        if (ModelOptions.isTtsOnly(model, listed)) return ProbeResult.Failed(ModelError.ToolsUnsupported(model))
         val probeKey = apiKey?.let { KeyPoolManager.shared.parseKeys(it).firstOrNull() ?: it }
-        val cfg = ProviderConfig(PROBE_ID, kind, baseUrl, model, caps.copy(toolCalls = true))
+        val cfg = ProviderConfig(PROBE_ID, kind, baseUrl, model, caps.copy(toolCalls = true), providerId = providerId)
         val m = modelFactory(cfg, probeKey, endpoint, ClientSetup(headers(sessionHeader, ModelSession.fresh()), PROBE_MAX_TOKENS))
         return try {
             val reply = m.complete(PROBE_SYSTEM, listOf(Message(Role.User, listOf(Part.Text(PROBE_TEXT)), Author.Mika)), listOf(PROBE_TOOL))
@@ -1329,6 +1350,13 @@ class ProviderStore(
         _configs.value = _configs.value.filter { it.id in used }
     }
 
+    private fun pruneIneligibleChatChoices() {
+        val configs = _configs.value
+        val allowed = configs.filter { it.canUseForChat() }
+        _roles.value = _roles.value.keepOnly(allowed.mapTo(hashSetOf()) { it.id })
+        _configs.value = allowed
+    }
+
     private fun load() {
         if (configFile.isFile) runCatching {
             val root = json.parseToJsonElement(configFile.readText()).jsonObject
@@ -1346,7 +1374,7 @@ class ProviderStore(
         migrate()
         repairStaleContextDefaults()
         // 指向不存在的配置的选择退回默认,没人用的配置删掉;和文件里的不一样(含刚迁移的用途)才写回
-        _roles.value = _roles.value.keepOnly(_configs.value.map { it.id }.toSet())
+        pruneIneligibleChatChoices()
         dropMainFromFallbacks()
         repairUnavailableReasoningEfforts()
         prune()
@@ -1478,6 +1506,7 @@ class ProviderStore(
                 },
                 unsupportedApis = m["unsupportedApis"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
                 protocols = m["protocols"]?.jsonArray?.mapNotNull { ModelProtocol.of(it.jsonPrimitive.content) }?.takeIf { it.isNotEmpty() },
+                speechOnly = (m["speechOnly"] as? JsonPrimitive)?.booleanOrNull == true,
             )
         },
     )
@@ -1537,7 +1566,11 @@ class ProviderStore(
 
     private fun writeConfig() = writeAtomically(configFile, configJson())
 
-    private fun configJson(providers: List<Provider> = _providers.value): String {
+    private fun configJson(
+        providers: List<Provider> = _providers.value,
+        configs: List<ProviderConfig> = _configs.value,
+        roles: RoleChoices = _roles.value,
+    ): String {
         val root = buildJsonObject {
             putJsonArray("services") {
                 providers.forEach { p ->
@@ -1573,6 +1606,7 @@ class ProviderStore(
                                         m.reasoningEfforts?.let { levels -> putJsonArray("reasoningEfforts") { levels.forEach { add(it) } } }
                                         m.thinkingTypes?.let { types -> putJsonArray("thinkingTypes") { types.forEach { add(it) } } }
                                         m.chat?.let { put("chat", it) }
+                                        if (m.speechOnly) put("speechOnly", true)
                                         m.endpoint?.let { e ->
                                             putJsonObject("api") {
                                                 put("protocol", e.protocol.wire); put("baseUrl", e.baseUrl)
@@ -1589,7 +1623,7 @@ class ProviderStore(
                 }
             }
             putJsonArray("providers") {
-                _configs.value.forEach { c ->
+                configs.forEach { c ->
                     addJsonObject {
                         put("id", c.id); put("providerId", c.providerId); put("name", c.name); put("kind", c.kind.name)
                         put("baseUrl", c.baseUrl); put("model", c.model)
@@ -1602,24 +1636,24 @@ class ProviderStore(
             }
             putJsonObject("uses") {
                 ModelRole.entries.forEach { role ->
-                    when (val c = _roles.value[role]) {
+                    when (val c = roles[role]) {
                         is RoleChoice.Model -> putJsonObject(role.name) {
                             put("use", USE_MODEL); put("config", c.configId)
-                            _roles.value.reasoningEfforts[role]?.let { put("reasoningEffort", it) }
+                            roles.reasoningEfforts[role]?.let { put("reasoningEffort", it) }
                         }
                         RoleChoice.SameAsMain -> putJsonObject(role.name) { put("use", USE_MAIN) }
                         RoleChoice.Off -> putJsonObject(role.name) { put("use", USE_NONE) }
                         null -> Unit
                     }
                 }
-                if (_roles.value.mainFallbacks.isNotEmpty()) putJsonArray("MainFallbacks") {
-                    _roles.value.mainFallbacks.forEach { add(it) }
+                if (roles.mainFallbacks.isNotEmpty()) putJsonArray("MainFallbacks") {
+                    roles.mainFallbacks.forEach { add(it) }
                 }
-                if (_roles.value.visionFallbacks.isNotEmpty()) putJsonArray("VisionFallbacks") {
-                    _roles.value.visionFallbacks.forEach { add(it) }
+                if (roles.visionFallbacks.isNotEmpty()) putJsonArray("VisionFallbacks") {
+                    roles.visionFallbacks.forEach { add(it) }
                 }
-                if (_roles.value.lightFallbacks.isNotEmpty()) putJsonArray("LightFallbacks") {
-                    _roles.value.lightFallbacks.forEach { add(it) }
+                if (roles.lightFallbacks.isNotEmpty()) putJsonArray("LightFallbacks") {
+                    roles.lightFallbacks.forEach { add(it) }
                 }
             }
         }

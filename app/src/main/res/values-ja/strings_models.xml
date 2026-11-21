@@ -47,7 +47,7 @@
     <string name="models_models">モデル</string>
     <string name="models_models_note">モデルをタップして役割を選んでください。</string>
     <string name="models_no_list_note">このプロバイダーはモデル一覧を返しません。上の欄に、プロバイダーのドキュメントに記載されているモデル ID を入力してください。</string>
-    <string name="models_untested_note">このプロバイダーはテストせずに保存したので、動作するかどうかは分かっていません。モデルを選んでテストするか、「更新」をタップしてモデルを一覧にしてください。</string>
+    <string name="models_untested_note">このプロバイダーはテストせずに保存されました。「更新」をタップしてモデル一覧を取得できます。</string>
     <string name="models_not_listed">このプロバイダーのモデルは、まだ一覧にしていません。</string>
     <string name="refresh">更新</string>
     <string name="models_in_use">使用中</string>
@@ -124,8 +124,11 @@
     <string name="chatgpt_page_back">Mika に戻る</string>
     <string name="chatgpt_no_browser">ログインに使えるブラウザが見つかりません。</string>
     <string name="models_unverified">未テスト。タスクが失敗することがあります</string>
-    <string name="models_unverified_note">このプロバイダーにはモデル一覧がなく、使用中の %1$s はテストに通っていないため、タスクが失敗することがあります。「もう一度テスト」をタップすると、このモデルでテスト呼び出しを 1 回行います。</string>
+    <string name="models_unverified_note">使用中でテストを通過していないモデルがあります（%1$s）。確認するには、対象モデルのテストボタンをタップしてください。</string>
     <string name="models_retest">もう一度テスト</string>
+    <string name="models_retest_model">%1$s をテスト</string>
+    <string name="models_retest_confirm_title">モデルをテストしますか？</string>
+    <string name="models_retest_confirm_body">Mika がプロバイダー %2$s のモデル %1$s にツール呼び出しのテストリクエストを 1 回送信します。</string>
 
     <string name="account_signin_copied">コピーしました</string>
     <string name="account_signin_notif_title">アカウントにログイン中</string>

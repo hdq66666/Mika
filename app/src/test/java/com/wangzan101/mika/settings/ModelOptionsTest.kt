@@ -234,15 +234,48 @@ class ModelOptionsTest {
             models = listOf(
                 ListedModel("chat"),
                 ListedModel("speech", displayName = "Speech", unsupportedApis = listOf("/v1/audio/speech")),
+                ListedModel("fishaudio/drama-3-int4"),
+                ListedModel("voice-alias", speechOnly = true),
+                ListedModel("gpt-4o-audio-preview", chat = true),
                 ListedModel("realtime", unsupportedApis = listOf("realtime")),
             ),
-            ttsModels = setOf("chat", "legacy-tts"),
+            typedModels = setOf("local-tts"),
+            ttsModels = setOf("chat", "legacy-model-id"),
         )
-        assertEquals(listOf("chat"), ModelOptions.ofProvider(p, emptyList()).map { it.id })
+        assertEquals(listOf("gpt-4o-audio-preview"), ModelOptions.ofProvider(p, emptyList()).map { it.id })
         val details = ModelOptions.ofProvider(p, emptyList(), includeTts = true)
-        assertEquals(listOf("chat", "speech", "legacy-tts"), details.map { it.id })
+        assertEquals(listOf("chat", "fishaudio/drama-3-int4", "voice-alias", "gpt-4o-audio-preview", "speech", "legacy-model-id", "local-tts"),
+            details.map { it.id })
         assertEquals("Speech", details.single { it.id == "speech" }.displayName)
         assertFalse(details.single { it.id == "speech" }.canBeMain)
-        assertEquals(setOf("chat", "legacy-tts"), p.ttsModels)
+        assertEquals(setOf("chat", "legacy-model-id"), p.ttsModels)
+    }
+
+    @Test fun providersAreHiddenWhenAllKnownModelsAreTts() {
+        val provider = Provider("p", "Local", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1",
+            models = listOf(ListedModel("marked-id"), ListedModel("voice-id", speechOnly = true)),
+            ttsModels = setOf("marked-id"))
+        assertFalse(ModelOptions.mayHaveNonTtsModels(provider))
+        assertFalse(ModelOptions.mayHaveNonTtsModels(provider.copy(models = null)))
+        assertFalse(ModelOptions.mayHaveNonTtsModels(provider.copy(models = emptyList(), typedModels = setOf("marked-id"))))
+        assertTrue(ModelOptions.mayHaveNonTtsModels(provider.copy(models = null, ttsModels = emptySet())))
+        assertTrue(ModelOptions.mayHaveNonTtsModels(provider.copy(typedModels = setOf("byo-chat"))))
+        assertTrue(ModelOptions.mayHaveNonTtsModels(provider.copy(models = null, verifiedModels = setOf("known-chat"))))
+    }
+
+    @Test fun declaredChatEndpointKeepsDualUseModelsAvailableUnlessExplicitlyMarked() {
+        val mixedId = "vendor/chat-tts"
+        val mixed = ListedModel(mixedId, protocols = listOf(ModelProtocol.ChatCompletions))
+        val contradictory = ListedModel("vendor/chat-and-speech", speechOnly = true, protocols = listOf(ModelProtocol.Responses))
+        val geminiTts = ListedModel("gemini-2.5-flash-preview-tts", protocols = listOf(ModelProtocol.GenerateContent))
+        val provider = Provider(
+            "p", "Speech", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1",
+            models = listOf(mixed, contradictory, geminiTts),
+        )
+
+        assertEquals(listOf(mixedId, contradictory.id), ModelOptions.ofProvider(provider, emptyList()).map { it.id })
+        assertTrue(mixedId in ModelOptions.candidates(ModelOptions.merge(provider.models.orEmpty(), base)))
+        assertFalse(ModelOptions.canUseForChat(provider.copy(ttsModels = setOf(mixedId)), mixedId))
+        assertFalse(ModelOptions.canUseForChat(provider, geminiTts.id))
     }
 }

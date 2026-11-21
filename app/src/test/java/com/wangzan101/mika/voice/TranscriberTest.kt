@@ -26,6 +26,17 @@ class TranscriberTest {
 
     private val wav = Wav.silence(100)
 
+    @Test fun transcriptionAndProbeRejectTtsBeforeSendingAudio() = runBlocking {
+        val p = provider(ProviderConfig.Kind.OpenAiCompat, "/v1").copy(ttsModels = setOf("custom"))
+        val probeError = runCatching { t.detect(p, null, "fishaudio/drama-3-int4") }.exceptionOrNull()
+        val transcribeError = runCatching {
+            t.transcribe(p, null, "custom", TranscribeMethod.AudioTranscriptions, wav, null)
+        }.exceptionOrNull()
+        assertTrue(probeError is IllegalArgumentException)
+        assertTrue(transcribeError is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test
     fun audioTranscriptionsSendsMultipart() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"text":"你好"}"""))

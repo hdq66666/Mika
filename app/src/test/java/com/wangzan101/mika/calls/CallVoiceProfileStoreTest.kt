@@ -123,6 +123,13 @@ class CallVoiceProfileStoreTest {
             store.save(CallVoiceProfile(id = "blank-voice", name = "Blank voice", speaker = "")).speaker)
     }
 
+    @Test fun ttsModelCannotBeSavedButAnIndependentSpeakerIdCan() {
+        val store = store(Backend())
+        val saved = store.save(CallVoiceProfile(name = "Realtime", speaker = "custom_tts_voice"))
+        assertTrue(runCatching { store.save(saved.copy(model = "fishaudio/drama-3-int4")) }.isFailure)
+        assertEquals(saved, store.get(saved.id))
+    }
+
     @Test fun unreadableStoreFallsBackWithoutOverwritingEncryptedData() {
         val backend = Backend("not-json")
         val store = store(backend)

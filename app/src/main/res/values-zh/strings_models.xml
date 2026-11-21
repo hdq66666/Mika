@@ -47,7 +47,7 @@
     <string name="models_models">模型</string>
     <string name="models_models_note">点按一个模型，选择它的用途。</string>
     <string name="models_no_list_note">这家服务商未返回模型列表。请在上方输入服务商文档中的模型 ID。</string>
-    <string name="models_untested_note">这家是跳过测试存下的，还不知道能不能用。选一个模型时会先试调用，也可以点右上角刷新列出它的模型。</string>
+    <string name="models_untested_note">这家服务商尚未测试。点击右上角的刷新按钮可获取模型列表。</string>
     <string name="models_not_listed">还没列出这家的模型。</string>
     <string name="refresh">刷新</string>
     <string name="models_in_use">正在用这个</string>
@@ -130,8 +130,11 @@
     <string name="chatgpt_page_back">回到 Mika</string>
     <string name="chatgpt_no_browser">没有找到可以用来登录的浏览器。</string>
     <string name="models_unverified">没测试通过，任务可能会失败</string>
-    <string name="models_unverified_note">这家不提供模型列表，在用的 %1$s 还没测试通过，任务可能会失败。点「重新测试」用它试调用一次。</string>
+    <string name="models_unverified_note">正在使用的 %1$s 尚未通过测试。点击对应模型的测试按钮可单独验证。</string>
     <string name="models_retest">重新测试</string>
+    <string name="models_retest_model">测试 %1$s</string>
+    <string name="models_retest_confirm_title">测试模型？</string>
+    <string name="models_retest_confirm_body">Mika 将向服务商 %2$s 的模型 %1$s 发送一次工具调用测试请求。</string>
 
     <!-- 账号登录：xAI / Grok（设备码）。 -->
     <string name="account_signin_copied">已复制</string>

@@ -14,6 +14,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.calls.*
+import com.wangzan101.mika.settings.ModelOptions
 import com.wangzan101.mika.ui.components.*
 import com.wangzan101.mika.ui.theme.MikaIcons
 import com.wangzan101.mika.ui.theme.MikaTheme
@@ -148,7 +149,8 @@ private fun CallVoiceProfileDialog(
     var legacy by remember(profile) { mutableStateOf(false) }
     val id = profile?.id.orEmpty()
     val configured = profile?.credentialsConfigured == true
-    val valid = name.isNotBlank() && endpoint.startsWith("wss://") && model.isNotBlank() &&
+    val ttsModel = ModelOptions.isTtsOnly(model)
+    val valid = name.isNotBlank() && endpoint.startsWith("wss://") && model.isNotBlank() && !ttsModel &&
         (!legacy || (appId.isBlank() && accessKey.isBlank()) || (appId.isNotBlank() && accessKey.isNotBlank()))
     AlertDialog(
         onDismissRequest = { if (!externalBusy) onDismiss() },
@@ -181,7 +183,10 @@ private fun CallVoiceProfileDialog(
                 OutlinedTextField(endpoint, { endpoint = it.take(CallVoiceProfile.MAX_ENDPOINT) }, Modifier.fillMaxWidth().testTag("call-voice-endpoint"),
                     label = { Text(stringResource(R.string.calls_voice_endpoint)) }, singleLine = true, enabled = !externalBusy && !openAi)
                 OutlinedTextField(model, { model = it.take(CallVoiceProfile.MAX_MODEL) }, Modifier.fillMaxWidth().testTag("call-voice-model"),
-                    label = { Text(stringResource(R.string.calls_voice_model)) }, singleLine = true, enabled = !externalBusy)
+                    label = { Text(stringResource(R.string.calls_voice_model)) }, singleLine = true, enabled = !externalBusy,
+                    isError = ttsModel, supportingText = if (ttsModel) {
+                        { Text(stringResource(R.string.model_tts_only_not_supported)) }
+                    } else null)
                 OutlinedTextField(speaker, { speaker = it.take(CallPolicy.MAX_SPEAKER_CHARS) }, Modifier.fillMaxWidth(),
                     label = { Text(stringResource(R.string.calls_speaker)) }, singleLine = true, enabled = !externalBusy,
                     supportingText = { if (!openAi) Text(stringResource(R.string.calls_speaker_edit_note)) })

@@ -47,7 +47,7 @@
     <string name="models_models">Modeller</string>
     <string name="models_models_note">Rolünü seçmek için bir modele dokunun.</string>
     <string name="models_no_list_note">Bu sağlayıcı model listesi döndürmüyor. Yukarıdaki alana sağlayıcının belgelerindeki model kimliğini girin.</string>
-    <string name="models_untested_note">Bu sağlayıcı test edilmeden kaydedildi, bu yüzden çalışıp çalışmadığı bilinmiyor. Test etmek için bir model seçin veya modellerini listelemek için Yenile\'ye dokunun.</string>
+    <string name="models_untested_note">Bu sağlayıcı test edilmeden kaydedildi. Model listesini almak için Yenile düğmesine dokunun.</string>
     <string name="models_not_listed">Bu sağlayıcının modelleri henüz listelenmedi.</string>
     <string name="refresh">Yenile</string>
     <string name="models_in_use">Kullanımda</string>
@@ -130,8 +130,11 @@
     <string name="chatgpt_page_back">Mika\'ya dön</string>
     <string name="chatgpt_no_browser">Oturum açmak için tarayıcı bulunamadı.</string>
     <string name="models_unverified">Test edilmedi; görevler başarısız olabilir</string>
-    <string name="models_unverified_note">Bu sağlayıcının model listesi yok ve %1$s (kullanımda) bir testi geçmedi, bu yüzden görevler başarısız olabilir. Onunla bir test çağrısı yapmak için \“Tekrar test et\”e dokunun.</string>
+    <string name="models_unverified_note">Kullanımdaki modeller (%1$s) henüz testi geçmedi. Bir modeli kontrol etmek için o modelin test düğmesine dokunun.</string>
     <string name="models_retest">Tekrar test et</string>
+    <string name="models_retest_model">%1$s modelini test et</string>
+    <string name="models_retest_confirm_title">Model test edilsin mi?</string>
+    <string name="models_retest_confirm_body">Mika, %2$s sağlayıcısındaki %1$s modeline bir araç çağırma testi isteği gönderecek.</string>
 
     <string name="account_signin_copied">Kopyalandı</string>
     <string name="account_signin_notif_title">Hesabınızda oturum açılıyor</string>

@@ -49,7 +49,7 @@
     <string name="models_models">Modelos</string>
     <string name="models_models_note">Toca un modelo para elegir su rol.</string>
     <string name="models_no_list_note">Este proveedor no devuelve una lista de modelos. Introduce en el campo de arriba un ID de modelo que figure en la documentación del proveedor.</string>
-    <string name="models_untested_note">Este proveedor se guardó sin probar, así que no se sabe si funciona. Elige un modelo para probarlo o toca Actualizar para listar sus modelos.</string>
+    <string name="models_untested_note">Este proveedor se guardó sin probar. Toca Actualizar para obtener su lista de modelos.</string>
     <string name="models_not_listed">Aún no se han listado los modelos de este proveedor.</string>
     <string name="refresh">Actualizar</string>
     <string name="models_in_use">En uso</string>
@@ -134,8 +134,11 @@
     <string name="chatgpt_page_back">Volver a Mika</string>
     <string name="chatgpt_no_browser">No se encontró ningún navegador para iniciar sesión.</string>
     <string name="models_unverified">Sin probar; las tareas pueden fallar</string>
-    <string name="models_unverified_note">Este proveedor no tiene lista de modelos y %1$s (en uso) no ha pasado una prueba, así que las tareas pueden fallar. Toca “Probar de nuevo” para hacer una llamada de prueba con él.</string>
+    <string name="models_unverified_note">Los modelos en uso (%1$s) aún no han pasado una prueba. Para comprobar uno, toca su botón de prueba.</string>
     <string name="models_retest">Probar de nuevo</string>
+    <string name="models_retest_model">Probar %1$s</string>
+    <string name="models_retest_confirm_title">¿Probar el modelo?</string>
+    <string name="models_retest_confirm_body">Mika enviará una solicitud de prueba de llamada a herramientas al modelo %1$s del proveedor %2$s.</string>
 
     <string name="account_signin_copied">Copiado</string>
     <string name="account_signin_notif_title">Iniciando sesión en tu cuenta</string>

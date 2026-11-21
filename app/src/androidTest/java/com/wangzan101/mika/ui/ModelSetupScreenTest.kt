@@ -1,14 +1,17 @@
 package com.wangzan101.mika.ui
 
 import com.wangzan101.mika.ChineseUi
+import com.wangzan101.mika.R
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsOff
-import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -29,6 +32,8 @@ import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderPresets
 import com.wangzan101.mika.settings.RoleChoice
 import com.wangzan101.mika.settings.RoleChoices
+import com.wangzan101.mika.settings.TtsProtocol
+import com.wangzan101.mika.settings.VoiceChoice
 import com.wangzan101.mika.ui.theme.MikaTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -132,6 +137,22 @@ class ModelSetupScreenTest {
         assertEquals(listOf("role Light"), calls)
     }
 
+    @Test fun settingsShowsSelectedTtsModelInTheSameRoleCardStyle() {
+        val provider = deepseek.copy(ttsModels = setOf("tts-a"))
+        val ui = connected().copy(providers = listOf(provider, qwen))
+        compose.setContent {
+            MikaTheme {
+                ModelSetupContent(
+                    ui, onboarding = false, actions = ModelSetupActions(openVoice = { calls += "voice" }),
+                    voiceChoice = VoiceChoice(provider.id, "tts-a", TtsProtocol.OpenAiSpeech), onBack = {},
+                )
+            }
+        }
+        compose.onNodeWithTag("role-voice").performScrollTo()
+            .assertTextContains("tts-a").assertTextContains("DeepSeek").performClick()
+        assertEquals(listOf("voice"), calls)
+    }
+
     @Test fun settingsPageOpensTokenUsageButOnboardingDoesNotShowIt() {
         show(connected(), onboarding = false)
         compose.onNodeWithText(UsageCopy.TITLE).performScrollTo().performClick()
@@ -222,6 +243,30 @@ class ModelSetupScreenTest {
         assertEquals(listOf("${RoleChoice.SameAsMain}", "${RoleChoice.Off}", "p1 deepseek-coder", "p2 qwen-long"), picked)
     }
 
+    @Test fun chatPickerHidesTtsModelsAndTtsOnlyProviders() {
+        val mixed = deepseek.copy(
+            models = deepseek.models.orEmpty() + ListedModel("speech-mixed"),
+            ttsModels = setOf("speech-mixed"),
+        )
+        val speechOnly = deepseek.copy(
+            id = "speech-only",
+            name = "Local Voice",
+            models = listOf(ListedModel("fishaudio/drama-3-int4")),
+            ttsModels = setOf("fishaudio/drama-3-int4"),
+        )
+        val ui = connected().copy(providers = listOf(mixed, speechOnly))
+        compose.setContent {
+            MikaTheme {
+                RolePickerContent(ui, ModelRole.Main, RolePickerActions(), onBack = {})
+            }
+        }
+        compose.onNodeWithText("DeepSeek").assertIsDisplayed()
+        compose.onNodeWithText("deepseek-chat").assertIsDisplayed()
+        compose.onNodeWithText("speech-mixed").assertDoesNotExist()
+        compose.onNodeWithText("Local Voice").assertDoesNotExist()
+        compose.onNodeWithText("fishaudio/drama-3-int4").assertDoesNotExist()
+    }
+
     @Test fun lightPickerOffersOnlySameAsMain() {
         compose.setContent { MikaTheme { RolePickerContent(connected(), ModelRole.Light, RolePickerActions(), onBack = {}) } }
         compose.onNodeWithText(ModelsCopy.LIGHT_SAME_NOTE).assertIsDisplayed()
@@ -265,6 +310,31 @@ class ModelSetupScreenTest {
         compose.awaitOne(ModelsCopy.deleteBody(listOf(ModelRole.Vision)), inDialog = true).assertIsDisplayed()
     }
 
+    @Test fun providerRetestConfirmsOneNamedModelBeforeCallingIt() {
+        val provider = deepseek.copy(models = emptyList())
+        val second = main.copy(id = "c3", model = "deepseek-other")
+        val ui = connected(RoleChoices(main = main.id, light = RoleChoice.Model(second.id))).copy(
+            providers = listOf(provider, qwen), configs = listOf(main, second),
+        )
+        val tested = mutableListOf<String>()
+        compose.setContent {
+            MikaTheme {
+                ProviderDetailContent(ui, provider, ProviderDetailActions(retestModel = { tested += it }), onBack = {})
+            }
+        }
+        val model = main.model
+        val action = compose.onNodeWithTag("provider-retest-$model").performScrollTo()
+        action.performClick()
+        compose.awaitOne(appString(R.string.models_retest_confirm_title), inDialog = true).assertIsDisplayed()
+        compose.onNode(hasText(model, substring = true) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        assertTrue(tested.isEmpty())
+        compose.awaitOne(ModelSetupCopy.CANCEL, inDialog = true).performClick()
+        assertTrue(tested.isEmpty())
+        action.performClick()
+        compose.onNodeWithTag("provider-confirm-retest").performClick()
+        assertEquals(listOf(model), tested)
+    }
+
     @Test fun tappingAModelOpensUseAsSheetAndAssigns() {
         val used = mutableListOf<String>()
         compose.setContent {
@@ -304,13 +374,14 @@ class ModelSetupScreenTest {
         val tts = compose.onNodeWithTag("model-use-tts")
         openRole("deepseek-chat")
         compose.awaitOne(ModelsCopy.IN_USE).assertIsDisplayed()
-        tts.assertIsOff().performClick().assertIsOn()
-        compose.awaitOne(ModelSetupCopy.CANCEL).performClick()
+        tts.assertIsNotSelected().performClick()
+        compose.onNodeWithTag("use-as").assertDoesNotExist()
         openRole("deepseek-coder")
-        tts.assertIsOff().performClick().assertIsOn()
-        compose.awaitOne(ModelSetupCopy.CANCEL).performClick()
+        tts.assertIsNotSelected().performClick()
+        compose.onNodeWithTag("use-as").assertDoesNotExist()
         openRole("deepseek-chat")
-        tts.assertIsOn().performClick().assertIsOff()
+        tts.assertIsSelected().assertTextContains(ModelsCopy.IN_USE).performClick()
+        compose.onNodeWithTag("use-as").assertDoesNotExist()
         assertEquals(setOf("deepseek-coder"), provider.ttsModels)
     }
 
@@ -330,7 +401,8 @@ class ModelSetupScreenTest {
         compose.onNodeWithTag("manual-model").performScrollTo().performTextInput("fishaudio/drama-3-int4")
         compose.onNodeWithTag("manual-model-use").performClick()
         compose.awaitOne(ModelsCopy.useAsSubtitle("DeepSeek")).assertIsDisplayed()
-        compose.onNodeWithTag("model-use-tts").performClick()
+        compose.onNodeWithTag("model-use-tts").assertIsNotSelected().performClick()
+        compose.onNodeWithTag("use-as").assertDoesNotExist()
         assertEquals(listOf("fishaudio/drama-3-int4" to true), marked)
     }
 

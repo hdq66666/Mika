@@ -47,7 +47,7 @@
     <string name="models_models">Model</string>
     <string name="models_models_note">Ketuk model untuk memilih perannya.</string>
     <string name="models_no_list_note">Penyedia ini tidak memberikan daftar model. Masukkan ID model dari dokumentasi penyedia pada kolom di atas.</string>
-    <string name="models_untested_note">Penyedia ini disimpan tanpa pengujian, jadi belum diketahui apakah berfungsi. Pilih sebuah model untuk mengujinya, atau ketuk Segarkan untuk memuat daftar modelnya.</string>
+    <string name="models_untested_note">Penyedia ini disimpan tanpa pengujian. Ketuk Segarkan untuk memuat daftar modelnya.</string>
     <string name="models_not_listed">Model penyedia ini belum dimuat.</string>
     <string name="refresh">Segarkan</string>
     <string name="models_in_use">Sedang dipakai</string>
@@ -123,8 +123,11 @@
     <string name="chatgpt_page_back">Kembali ke Mika</string>
     <string name="chatgpt_no_browser">Tidak ada browser untuk masuk.</string>
     <string name="models_unverified">Belum diuji; tugas mungkin gagal</string>
-    <string name="models_unverified_note">Penyedia ini tidak punya daftar model, dan %1$s (sedang dipakai) belum lulus pengujian, jadi tugas mungkin gagal. Ketuk “Uji lagi” untuk melakukan satu panggilan uji dengannya.</string>
+    <string name="models_unverified_note">Model yang sedang dipakai (%1$s) belum lulus pengujian. Untuk memeriksa satu model, ketuk tombol ujinya.</string>
     <string name="models_retest">Uji lagi</string>
+    <string name="models_retest_model">Uji %1$s</string>
+    <string name="models_retest_confirm_title">Uji model?</string>
+    <string name="models_retest_confirm_body">Mika akan mengirim satu permintaan uji pemanggilan alat ke model %1$s pada penyedia %2$s.</string>
 
     <string name="account_signin_copied">Disalin</string>
     <string name="account_signin_notif_title">Masuk ke akun Anda</string>

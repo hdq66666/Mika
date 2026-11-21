@@ -256,14 +256,26 @@ class ProviderStoreTest {
     private fun connected(s: ProviderStore, name: String = "P", key: String = "k") =
         s.connect(name, ProviderConfig.Kind.OpenAiCompat, "https://${name.lowercase()}.test/v1", key, listOf(ListedModel("m1"), ListedModel("m2")))
 
-    @Test fun ttsMarkingsPersistIndependentlyOfChatRolesAndProviderRefresh() {
+    @Test fun markingTtsRemovesItsChatRoleAndFallbacksButKeepsOtherModels() {
         val s = store()
         val p = connected(s)
         val other = connected(s, "Other")
         assertTrue(p.ttsModels.isEmpty())
         assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+        val speechId = s.roles.value.main!!
+        assertTrue(s.use(ModelRole.Vision, p.id, "m1", none))
+        assertTrue(s.use(ModelRole.Light, p.id, "m1", none))
+        val otherId = s.ensureConfigId(other.id, "m1", none)!!
+        for (role in ModelRole.entries) {
+            assertTrue(s.setFallback(role, 0, otherId))
+        }
 
         assertTrue(s.setTtsModel(p.id, "m1", true))
+        assertEquals(RoleChoices(
+            mainFallbacks = listOf(otherId), visionFallbacks = listOf(otherId), lightFallbacks = listOf(otherId),
+        ), s.roles.value)
+        assertNull(s.configById(speechId))
+        assertEquals(other.id, s.configById(otherId)?.providerId)
         assertTrue(s.setTtsModel(p.id, " manual-tts ", true))
         assertTrue(s.setTtsModel(p.id, "m1", true))
         s.rememberModels(p.id, listOf(ListedModel("m2")))
@@ -274,12 +286,51 @@ class ProviderStoreTest {
 
         val reopened = store()
         assertEquals(setOf("m1", "manual-tts"), reopened.provider(p.id)!!.ttsModels)
-        assertEquals("m1", reopened.configFor(ModelRole.Main)?.model)
+        assertEquals(s.roles.value, reopened.roles.value)
         assertTrue(reopened.setTtsModel(p.id, "m1", false))
         assertEquals(setOf("manual-tts"), store().provider(p.id)!!.ttsModels)
-        assertEquals("m1", reopened.configFor(ModelRole.Main)?.model)
+        assertNull(reopened.configFor(ModelRole.Main))
         assertFalse(reopened.setTtsModel(p.id, " ", true))
         assertFalse(reopened.setTtsModel("missing", "m1", true))
+    }
+
+    @Test fun chatRolesAndProbesRejectTtsWithoutBuildingAnAdapter() = runTest {
+        val s = store()
+        val models = listOf(ListedModel("voice-alias", speechOnly = true), ListedModel("shared-id"))
+        val p = s.connect("Speech", ProviderConfig.Kind.OpenAiCompat, "https://speech.test/v1", null, models)
+        assertTrue(s.setTtsModel(p.id, "shared-id", true))
+        for (model in listOf("voice-alias", "fishaudio/drama-3-int4", "shared-id")) {
+            for (role in ModelRole.entries) assertFalse(s.use(role, p.id, model, none))
+            assertNull(s.ensureConfigId(p.id, model, none))
+            val raw = cfg("blocked").copy(providerId = p.id, model = model)
+            s.save(raw, null)
+            assertFalse(s.choose(ModelRole.Main, RoleChoice.Model(raw.id)))
+            assertFalse(s.setMainFallback(0, raw.id))
+            assertNull(s.modelForConfig(raw.id))
+        }
+        val listed = models.first()
+        assertTrue(s.probe(p.kind, p.baseUrl, null, null, listed.id, null, none, listed) is ProbeResult.Failed)
+        assertTrue(built.isEmpty())
+        assertEquals(true, store().provider(p.id)?.models?.firstOrNull { it.id == listed.id }?.speechOnly)
+    }
+
+    @Test fun olderSettingsWithTheSameModelInVoiceAndChatAreRepairedOnStartup() {
+        val s = store()
+        val provider = connected(s)
+        assertTrue(s.use(ModelRole.Main, provider.id, "m1", none))
+        assertTrue(s.use(ModelRole.Vision, provider.id, "m2", none))
+        val existing = File(tmp.root, "providers.json")
+        val stored = existing.readText()
+        val entryStart = "\"id\":\"${provider.id}\",\"name\""
+        assertTrue(entryStart in stored)
+        existing.writeText(stored.replace(entryStart, "\"ttsModels\":[\"m1\"],$entryStart"))
+
+        val reopened = store()
+        assertEquals(setOf("m1"), reopened.provider(provider.id)?.ttsModels)
+        assertNull(reopened.configFor(ModelRole.Main))
+        assertEquals("m2", reopened.configFor(ModelRole.Vision)?.model)
+        assertEquals(listOf("m2"), reopened.list().map { it.model })
+        assertEquals(reopened.roles.value, store().roles.value)
     }
 
     @Test fun ttsAdapterRequiresThisProvidersModelToBeMarked() {

@@ -48,7 +48,7 @@
     <string name="models_models">مدل‌ها</string>
     <string name="models_models_note">برای انتخاب نقش یک مدل، روی آن بزنید.</string>
     <string name="models_no_list_note">این ارائه‌دهنده فهرست مدل‌ها را برنمی‌گرداند. شناسهٔ مدل را از مستندات ارائه‌دهنده در کادر بالا وارد کنید.</string>
-    <string name="models_untested_note">این ارائه‌دهنده بدون آزمون ذخیره شده است، بنابراین عملکرد آن مشخص نیست. مدلی را برای آزمون انتخاب کنید یا برای دریافت فهرست مدل‌ها «تازه‌سازی» را بزنید.</string>
+    <string name="models_untested_note">این ارائه‌دهنده بدون آزمون ذخیره شده است. برای دریافت فهرست مدل‌های آن، «تازه‌سازی» را بزنید.</string>
     <string name="models_not_listed">فهرست مدل‌های این ارائه‌دهنده هنوز دریافت نشده است.</string>
     <string name="refresh">تازه‌سازی</string>
     <string name="models_in_use">در حال استفاده</string>
@@ -129,8 +129,11 @@
     <string name="chatgpt_page_back">بازگشت به میکا</string>
     <string name="chatgpt_no_browser">مرورگری برای ورود پیدا نشد.</string>
     <string name="models_unverified">آزمایش نشده است؛ ممکن است کارها ناموفق باشند</string>
-    <string name="models_unverified_note">این ارائه‌دهنده فهرست مدل ندارد و %1$s که در حال استفاده است آزمون را نگذرانده است، بنابراین ممکن است کارها ناموفق باشند. برای اجرای یک درخواست آزمایشی روی «آزمون دوباره» بزنید.</string>
+    <string name="models_unverified_note">مدل‌های در حال استفاده (%1$s) هنوز آزمون را نگذرانده‌اند. برای بررسی هر مدل، دکمهٔ آزمون آن را بزنید.</string>
     <string name="models_retest">آزمون دوباره</string>
+    <string name="models_retest_model">آزمون %1$s</string>
+    <string name="models_retest_confirm_title">مدل آزمایش شود؟</string>
+    <string name="models_retest_confirm_body">میکا یک درخواست آزمایشی فراخوانی ابزار به مدل %1$s در ارائه‌دهندهٔ %2$s می‌فرستد.</string>
 
     <string name="account_signin_copied">کپی شد</string>
     <string name="account_signin_notif_title">در حال ورود به حساب</string>
