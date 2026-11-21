@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -23,6 +24,7 @@ import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.settings.TtsProtocol
 import com.wangzan101.mika.settings.VoiceChoice
+import com.wangzan101.mika.settings.normalizeVoiceSpeed
 import com.wangzan101.mika.settings.VoiceSettings
 import com.wangzan101.mika.ui.components.FooterNote
 import com.wangzan101.mika.ui.components.GroupCard
@@ -107,9 +109,10 @@ internal fun VoiceModelContent(store: ProviderStore, settings: VoiceSettings, on
                     tr(R.string.voice_speed), speed,
                     onChange = {
                         speed = it
-                        it.toFloatOrNull()?.let { v -> saveChoice(choice.copy(speed = v)) }
+                        it.toFloatOrNull()?.takeIf { v -> v.isFinite() }?.let { v -> saveChoice(choice.copy(speed = normalizeVoiceSpeed(v))) }
                     },
                     placeholder = "1.0", keyboard = KeyboardType.Decimal,
+                    modifier = Modifier.onFocusChanged { if (!it.hasFocus) speed = choice.speed.toString() },
                 )
             }
             GroupLabel(tr(R.string.voice_protocol))

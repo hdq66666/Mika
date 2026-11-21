@@ -30,6 +30,9 @@ enum class TtsProtocol(val wire: String) {
     }
 }
 
+internal fun normalizeVoiceSpeed(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0.25f, 4f) else 1f
+
 /** 用户选的声音、模型和接口；Key 仍由 [ProviderStore] 按服务商保存。 */
 data class VoiceChoice(
     val providerId: String,
@@ -90,7 +93,7 @@ class VoiceSettings(private val prefs: SharedPreferences) {
 
     fun setChoice(choice: VoiceChoice?) = update {
         copy(choice = choice?.copy(
-            speed = choice.speed.coerceIn(0.25f, 4.0f),
+            speed = normalizeVoiceSpeed(choice.speed),
             streaming = choice.streaming && choice.protocol == TtsProtocol.OpenAiSpeech,
         ))
     }
@@ -161,7 +164,7 @@ class VoiceSettings(private val prefs: SharedPreferences) {
             model = model,
             protocol = protocol,
             voice = (obj["voice"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-            speed = ((obj["speed"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull() ?: 1.0f).coerceIn(0.25f, 4.0f),
+            speed = normalizeVoiceSpeed((obj["speed"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull() ?: 1f),
             streaming = protocol == TtsProtocol.OpenAiSpeech && bool("streaming", false),
         )
         return VoiceSettingsState(

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,7 +31,7 @@ class OpenAiSpeechModel(
     private val headers: Map<String, String> = emptyMap(),
 ) : StreamingTtsModel {
     override val name: String get() = model
-    private val endpoint = baseUrl.trimEnd('/') + "/audio/speech"
+    private val endpoint = (baseUrl.trimEnd('/') + "/audio/speech").toHttpUrl()
     private val json = "application/json".toMediaType()
 
     override suspend fun synthesize(request: TtsRequest): TtsResponse {
@@ -63,7 +64,9 @@ class OpenAiSpeechModel(
         if (format == "pcm") {
             return TtsResponse(wrapPcm16Wav(bytes, 24_000), "audio/wav", 24_000)
         }
-        return TtsResponse(bytes, audioMimeOrBad(bytes, header("Content-Type")))
+        val mime = audioMimeOrBad(bytes, header("Content-Type"))
+        if (mime == "audio/wav") finalizeStreamingWavHeader(bytes)
+        return TtsResponse(bytes, mime)
     }
 
     private suspend fun <T> executeCancellable(req: Request, read: suspend (Response) -> T): T = coroutineScope {
@@ -89,7 +92,13 @@ class OpenAiSpeechModel(
         if (text.isEmpty()) throw TtsError.Unsupported("text is empty")
         if (text.length > capabilities.maxChars) throw TtsError.Unsupported("text is longer than ${capabilities.maxChars} characters")
         if (format !in capabilities.formats) throw TtsError.Unsupported("format $format is not supported")
-        val voice = request.voice ?: capabilities.voices?.firstOrNull() ?: throw TtsError.Unsupported("voice is required")
+        val requestedVoice = request.voice?.trim()?.takeIf { it.isNotEmpty() }
+        val official = endpoint.isHttps && endpoint.host == "api.openai.com" && endpoint.port == 443
+        val voice = if (official && (requestedVoice == null || requestedVoice == "default")) {
+            "alloy"
+        } else {
+            requestedVoice ?: capabilities.voices?.firstOrNull() ?: throw TtsError.Unsupported("voice is required")
+        }
         capabilities.voices?.let { if (voice !in it) throw TtsError.Unsupported("voice $voice is not supported") }
         val payload = buildJsonObject {
             put("model", model)

@@ -107,6 +107,20 @@ class VoiceSettingsTest {
         assertNull(VoiceSettings(prefs).state.value.choice)
     }
 
+    @Test fun speedFromUiAndLegacyPreferencesStaysInRange() {
+        val prefs = MemoryPrefs()
+        val settings = VoiceSettings(prefs)
+        val choice = VoiceChoice("provider", "tts", TtsProtocol.OpenAiSpeech, "alloy")
+        for ((input, expected) in listOf(0f to .25f, 100f to 4f, Float.NaN to 1f)) {
+            settings.setChoice(choice.copy(speed = input))
+            assertEquals(expected, settings.state.value.choice?.speed)
+            assertEquals(expected, VoiceSettings(prefs).state.value.choice?.speed)
+        }
+        prefs.edit().putString("voice_settings",
+            """{"providerId":"provider","model":"tts","protocol":"openai-speech","speed":100}""").commit()
+        assertEquals(4f, VoiceSettings(prefs).state.value.choice?.speed)
+    }
+
     @Test fun maxCharsAndSpeedAreClamped() {
         val prefs = MemoryPrefs()
         val settings = VoiceSettings(prefs)
