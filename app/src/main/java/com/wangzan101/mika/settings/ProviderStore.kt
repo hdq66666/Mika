@@ -432,8 +432,10 @@ class ProviderStore(
         val attached = cfg.copy(providerId = p.id, kind = p.kind, baseUrl = p.baseUrl, name = p.name)
         val list = _configs.value
         val i = list.indexOfFirst { it.id == cfg.id }
+        if (attached.id in _roles.value.referenced && !attached.canUseForChat()) {
+            require(list.getOrNull(i)?.let { it.providerId == p.id && it.model == attached.model } == true)
+        }
         _configs.value = if (i >= 0) list.toMutableList().also { it[i] = attached } else list + attached
-        if (!attached.canUseForChat() && attached.id in _roles.value.referenced) pruneIneligibleChatChoices()
         if (apiKey != null) setKey(p.id, apiKey)
         writeConfig()
     }
@@ -521,7 +523,6 @@ class ProviderStore(
             savedUntested = untested && verified.isEmpty() && found.verifiedModels.isEmpty() && listed.isEmpty(),
         )
         _providers.value = _providers.value.map { if (it.id == p.id) p else it }
-        pruneIneligibleChatChoices()
         repairUnavailableReasoningEfforts()
         if (apiKey != null) setKey(p.id, apiKey)
         writeConfig()
@@ -535,7 +536,6 @@ class ProviderStore(
         _providers.value = _providers.value.map {
             if (it.id == providerId) it.copy(models = models, savedUntested = false) else it
         }
-        pruneIneligibleChatChoices()
         repairUnavailableReasoningEfforts()
         writeConfig()
     }
@@ -766,15 +766,23 @@ class ProviderStore(
         return true
     }
 
-    /** 设置一个模型的 TTS 用途，也接受服务商列表之外的手填模型。 */
+    /** 迁移只补记已有朗读选择；用户决定如何处理同时用于对话的旧模型。 */
+    @Synchronized
+    internal fun importLegacyTtsChoice(providerId: String, model: String): Boolean {
+        val p = provider(providerId) ?: return false
+        if (model in p.ttsModels) return true
+        return saveProviderSettings(p.withTtsMark(model, true))
+    }
+
+    /** 用户明确设置模型的 TTS 用途，也接受手填模型。 */
     @Synchronized
     fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
         val p = provider(providerId) ?: return false
         val id = model.trim().takeIf { it.isNotEmpty() } ?: return false
-        if ((id in p.ttsModels) == enabled) return true
         val updated = _providers.value.map { if (it.id == providerId) p.withTtsMark(id, enabled) else it }
         val removedIds = if (enabled) _configs.value.filter { it.providerId == p.id && it.model.trim() == id }.mapTo(hashSetOf()) { it.id }
             else emptySet()
+        if ((id in p.ttsModels) == enabled && removedIds.isEmpty()) return true
         val configs = _configs.value.filterNot { it.id in removedIds }
         val roles = if (removedIds.isEmpty()) _roles.value else _roles.value.keepOnly(configs.mapTo(hashSetOf()) { it.id })
         return saveRoleSelection(updated, configs, roles)
@@ -815,7 +823,6 @@ class ProviderStore(
     fun configFor(role: ModelRole): ProviderConfig? {
         val choices = _roles.value
         val cfg = choices.resolve(role)?.let { id -> _configs.value.firstOrNull { it.id == id } } ?: return null
-        if (!cfg.canUseForChat()) return null
         val sees = role == ModelRole.Vision || ModelOptions.seesImages(cfg.capabilities.vision,
             provider(cfg.providerId)?.visionOverrides?.get(cfg.model), usedForVision = choices.resolve(ModelRole.Vision) == cfg.id)
         return if (sees == cfg.capabilities.vision) cfg else cfg.copy(capabilities = cfg.capabilities.copy(vision = sees))
@@ -928,7 +935,7 @@ class ProviderStore(
      */
     fun modelForRoleConfig(role: ModelRole, configId: String, session: ModelSession = ModelSession.fresh()): ChatModel? {
         val raw = configById(configId) ?: return null
-        if (!raw.canUseForChat()) return null
+        if (!raw.canUseForChat() && configId !in _roles.value.referenced) return null
         val p = provider(raw.providerId)
         val source = UsageSource(raw.providerId, p?.name ?: raw.name, raw.model, UsagePurpose.of(role))
         val listed = listedOf(raw)
@@ -1391,13 +1398,6 @@ class ProviderStore(
         _configs.value = _configs.value.filter { it.id in used }
     }
 
-    private fun pruneIneligibleChatChoices() {
-        val configs = _configs.value
-        val allowed = configs.filter { it.canUseForChat() }
-        _roles.value = _roles.value.keepOnly(allowed.mapTo(hashSetOf()) { it.id })
-        _configs.value = allowed
-    }
-
     private fun load() {
         if (configFile.isFile) runCatching {
             val root = json.parseToJsonElement(configFile.readText()).jsonObject
@@ -1415,7 +1415,7 @@ class ProviderStore(
         migrate()
         repairStaleContextDefaults()
         // 指向不存在的配置的选择退回默认,没人用的配置删掉;和文件里的不一样(含刚迁移的用途)才写回
-        pruneIneligibleChatChoices()
+        _roles.value = _roles.value.keepOnly(_configs.value.mapTo(hashSetOf()) { it.id })
         dropMainFromFallbacks()
         repairUnavailableReasoningEfforts()
         prune()

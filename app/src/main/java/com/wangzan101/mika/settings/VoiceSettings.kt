@@ -79,7 +79,7 @@ class VoiceSettings(private val prefs: SharedPreferences) {
         if (!prefs.getBoolean(KEY_TTS_ROLE_MIGRATED, false)) {
             if (choice != null && store.provider(choice.providerId) != null) {
                 val model = choice.model.trim()
-                if (!store.setTtsModel(choice.providerId, model, true)) return
+                if (!store.importLegacyTtsChoice(choice.providerId, model)) return
                 if (model != choice.model) setChoice(choice.copy(model = model))
             }
             prefs.edit().putBoolean(KEY_TTS_ROLE_MIGRATED, true).apply()

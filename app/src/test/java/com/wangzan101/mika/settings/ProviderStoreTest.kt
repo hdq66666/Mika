@@ -360,7 +360,7 @@ class ProviderStoreTest {
         assertTrue(built.isEmpty())
     }
 
-    @Test fun olderSettingsWithTheSameModelInVoiceAndChatAreRepairedOnStartup() {
+    @Test fun overlappingLegacyRolesSurviveRestartAndRefreshUntilTheUserChooses() {
         val s = store()
         val provider = connected(s)
         assertTrue(s.use(ModelRole.Main, provider.id, "m1", none))
@@ -373,10 +373,13 @@ class ProviderStoreTest {
 
         val reopened = store()
         assertEquals(setOf("m1"), reopened.provider(provider.id)?.ttsModels)
+        reopened.rememberModels(provider.id, listOf(ListedModel("m1"), ListedModel("m2")))
+        assertEquals("m1", reopened.configFor(ModelRole.Main)?.model)
+        assertEquals("m2", reopened.configFor(ModelRole.Vision)?.model)
+        assertEquals(reopened.roles.value, store().roles.value)
+        assertTrue(reopened.setTtsModel(provider.id, "m1", true))
         assertNull(reopened.configFor(ModelRole.Main))
         assertEquals("m2", reopened.configFor(ModelRole.Vision)?.model)
-        assertEquals(listOf("m2"), reopened.list().map { it.model })
-        assertEquals(reopened.roles.value, store().roles.value)
     }
 
     @Test fun ttsAdapterRequiresThisProvidersModelToBeMarked() {

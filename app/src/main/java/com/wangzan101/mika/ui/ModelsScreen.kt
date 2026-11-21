@@ -884,11 +884,13 @@ private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, actions: Pr
     val c = MikaTheme.colors
     val option = ui.options(p).firstOrNull { it.id == model }
     val tts = model in p.ttsModels
+    val legacyOverlap = tts && ui.configs.any { it.providerId == p.id && it.model == model && it.id in ui.roles.referenced }
     var saveFailed by remember(p.id, model) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.surface, shape = MikaShapes.SheetTop) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 8.dp).testTag("use-as")) {
             Text(model, Modifier.padding(horizontal = 16.dp), style = ModelIdStyle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(ModelsCopy.useAsSubtitle(ModelsCopy.providerName(p)), Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 6.dp), style = MikaType.Caption, color = c.ink3)
+            if (legacyOverlap) FooterNote(tr(R.string.model_legacy_role_overlap))
             ModelRole.entries.forEachIndexed { i, role ->
                 val on = ui.picked(role, p.id, model)
                 RadioRow(
@@ -902,7 +904,7 @@ private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, actions: Pr
                 subtitle = if (tts) ModelsCopy.IN_USE else stringResource(R.string.role_tts_what),
                 modifier = Modifier.testTag("model-use-tts"),
                 onClick = {
-                    if (actions.setTts(model, !tts)) onDismiss() else saveFailed = true
+                    if (actions.setTts(model, legacyOverlap || !tts)) onDismiss() else saveFailed = true
                 },
             )
             if (saveFailed) FooterNote(tr(R.string.model_context_save_failed), color = c.bad)

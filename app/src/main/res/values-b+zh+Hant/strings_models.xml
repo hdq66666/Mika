@@ -62,6 +62,7 @@
     <string name="role_main">主模型</string>
     <string name="role_vision">看圖模型</string>
     <string name="role_light">輕量模型</string>
+    <string name="model_legacy_role_overlap">舊設定同時將此模型用於對話和朗讀。請選擇要保留的用途。</string>
     <string name="role_tts">TTS 模型</string>
     <string name="role_main_what">思考和辦事</string>
     <string name="role_vision_what">讀取螢幕時看截圖</string>

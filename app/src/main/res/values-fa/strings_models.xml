@@ -63,6 +63,7 @@
     <string name="role_main">مدل اصلی</string>
     <string name="role_vision">مدل بینایی</string>
     <string name="role_light">مدل سبک</string>
+    <string name="model_legacy_role_overlap">در تنظیمات قبلی، این مدل برای گفتگو و خواندن متن استفاده می‌شود. نقش موردنظر را انتخاب کنید.</string>
     <string name="role_tts">مدل تبدیل متن به گفتار</string>
     <string name="role_main_what">فکر کردن و انجام کار</string>
     <string name="role_vision_what">بررسی عکس‌های صفحه</string>

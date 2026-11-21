@@ -36,6 +36,20 @@ class VoiceSettingsTest {
         assertNull(VoiceSettings(prefs).state.value.choice)
     }
 
+    @Test fun importingVoiceKeepsAnExistingMainModelWithATtsLikeName() {
+        val store = ProviderStore(tmp.root, AesGcmKeyCipher { error("No credentials in this fixture") })
+        val p = store.connect("Relay", ProviderConfig.Kind.OpenAiCompat, "https://relay.test/v1", null, emptyList())
+        val model = "xxx-tts-proxy"
+        assertTrue(store.use(com.wangzan101.mika.core.model.ModelRole.Main, p.id, model, ModelOptions.baseOf(p)))
+        val settings = VoiceSettings(MemoryPrefs())
+        val original = VoiceChoice(p.id, model, TtsProtocol.OpenAiSpeech, "alloy")
+        settings.setChoice(original)
+        settings.reconcileTtsChoice(store)
+        assertEquals(original, settings.state.value.choice)
+        assertTrue(model in store.provider(p.id)!!.ttsModels)
+        assertEquals(model, store.configFor(com.wangzan101.mika.core.model.ModelRole.Main)?.model)
+    }
+
     @Test fun settingsPageAndChatShareLiveConfiguration() {
         val prefs = MemoryPrefs()
         val context = object : ContextWrapper(null), VoiceSettings.Owner {

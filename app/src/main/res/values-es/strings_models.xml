@@ -64,6 +64,7 @@
     <string name="role_main">Modelo principal</string>
     <string name="role_vision">Modelo de visión</string>
     <string name="role_light">Modelo ligero</string>
+    <string name="model_legacy_role_overlap">La configuración anterior usa este modelo para chat y voz. Elige la función que deseas conservar.</string>
     <string name="role_tts">Modelo TTS</string>
     <string name="role_main_what">Piensa y actúa</string>
     <string name="role_vision_what">Mira las capturas de pantalla</string>

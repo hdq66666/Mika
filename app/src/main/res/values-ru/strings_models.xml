@@ -65,6 +65,7 @@
     <string name="role_main">Основная модель</string>
     <string name="role_vision">Зрительная модель</string>
     <string name="role_light">Лёгкая модель</string>
+    <string name="model_legacy_role_overlap">В прежних настройках эта модель используется для чата и озвучивания. Выберите роль, которую хотите сохранить.</string>
     <string name="role_tts">Модель синтеза речи</string>
     <string name="role_main_what">Думает и действует</string>
     <string name="role_vision_what">Смотрит на снимки экрана</string>

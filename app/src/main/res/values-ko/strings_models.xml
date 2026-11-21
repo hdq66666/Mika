@@ -62,6 +62,7 @@
     <string name="role_main">메인 모델</string>
     <string name="role_vision">비전 모델</string>
     <string name="role_light">경량 모델</string>
+    <string name="model_legacy_role_overlap">이전 설정에서는 이 모델을 대화와 읽어주기에 모두 사용합니다. 유지할 용도를 선택하세요.</string>
     <string name="role_tts">TTS 모델</string>
     <string name="role_main_what">생각하고 실행해요</string>
     <string name="role_vision_what">스크린샷을 봐요</string>

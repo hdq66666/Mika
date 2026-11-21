@@ -67,6 +67,7 @@
     <string name="role_main">النموذج الرئيسي</string>
     <string name="role_vision">نموذج الرؤية</string>
     <string name="role_light">النموذج الخفيف</string>
+    <string name="model_legacy_role_overlap">تستخدم الإعدادات السابقة هذا النموذج للمحادثة والنطق. اختر الدور الذي تريد الاحتفاظ به.</string>
     <string name="role_tts">نموذج تحويل النص إلى كلام</string>
     <string name="role_main_what">التفكير والتنفيذ</string>
     <string name="role_vision_what">يفحص لقطات الشاشة</string>
