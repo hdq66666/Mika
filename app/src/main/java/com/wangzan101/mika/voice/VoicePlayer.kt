@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -70,23 +73,22 @@ class VoicePlayer(private val context: Context) {
         streaming: Boolean,
         onStarted: () -> Unit = {},
     ) = loadAndPlay {
-        var streamModel = if (streaming) model as? StreamingTtsModel else null
-        for ((index, request) in requests.withIndex()) {
-            val stream = streamModel
-            val started = { if (index == 0) onStarted() }
-            val complete = if (stream != null) collectStream(stream.streamAudio(request), started) else model.synthesize(request)
-            if (complete != null) {
-                // 后续段沿用已经确认可播放的完整音频路径。
-                streamModel = null
-                drainPcm(VoicePlayback.Loading)
-                _state.value = VoicePlayback.Loading
-                val completion = if (index < requests.lastIndex) CompletableDeferred<VoicePlayback>() else null
-                prepareFile(complete.bytes, complete.mime, started, completion)
-                val result = completion?.await()
-                if (result is VoicePlayback.Error) error(result.message)
-            }
+        val fallback = if (streaming && model is StreamingTtsModel) {
+            val response = playStreams(model, requests, onStarted)
+            drainPcm(if (response == null) VoicePlayback.Idle else VoicePlayback.Loading)
+            response ?: return@loadAndPlay
+        } else {
+            null
         }
-        drainPcm()
+        // 回退后逐段合成，等当前文件播完再取下一段。
+        for (index in (fallback?.index ?: 0)..requests.lastIndex) {
+            val audio = if (fallback?.index == index) fallback.response else model.synthesize(requests[index])
+            _state.value = VoicePlayback.Loading
+            val completion = if (index < requests.lastIndex) CompletableDeferred<VoicePlayback>() else null
+            prepareFile(audio.bytes, audio.mime, { if (index == 0) onStarted() }, completion)
+            val result = completion?.await()
+            if (result is VoicePlayback.Error) error(result.message)
+        }
     }
 
     private suspend fun loadAndPlay(block: suspend () -> Unit) = withContext(Dispatchers.Main.immediate) {
@@ -107,31 +109,72 @@ class VoicePlayer(private val context: Context) {
         }
     }
 
-    private suspend fun collectStream(parts: Flow<TtsAudioPart>, onStarted: () -> Unit): TtsResponse? {
-        var complete: TtsResponse? = null
-        var receivedPcm = false
-        parts.collect { part ->
-            check(complete == null) { "unexpected audio after a complete response" }
-            when (part) {
-                is TtsAudioPart.Pcm -> {
+    private sealed interface StreamEvent {
+        data class Pcm(val index: Int, val part: TtsAudioPart.Pcm) : StreamEvent
+        data class Fallback(val index: Int, val response: TtsResponse) : StreamEvent
+        data class Failed(val error: Exception) : StreamEvent
+    }
+
+    private suspend fun playStreams(
+        model: StreamingTtsModel,
+        requests: List<TtsRequest>,
+        onStarted: () -> Unit,
+    ): StreamEvent.Fallback? {
+        var playingIndex = -1
+        var fallback: StreamEvent.Fallback? = null
+        streamRequests(model, requests).collect { event ->
+            when (event) {
+                is StreamEvent.Pcm -> {
+                    val part = event.part
                     val current = pcmTrack
-                    if (!receivedPcm && current != null &&
+                    if (event.index != playingIndex && current != null &&
                         (current.sampleRate != part.sampleRate || current.channels != part.channels)
                     ) {
                         drainPcm(VoicePlayback.Loading)
                     }
-                    playPcmChunk(part, onStarted)
-                    receivedPcm = true
+                    playPcmChunk(part) { if (event.index == 0) onStarted() }
+                    playingIndex = event.index
                 }
-                is TtsAudioPart.Complete -> {
-                    check(!receivedPcm) { "unexpected complete audio after PCM" }
-                    complete = part.response
+                is StreamEvent.Fallback -> fallback = event
+                is StreamEvent.Failed -> {
+                    pcmTrack?.drain()
+                    throw event.error
                 }
             }
         }
-        check(receivedPcm || complete != null) { "empty audio stream" }
-        return complete
+        return fallback
     }
+
+    private fun streamRequests(model: StreamingTtsModel, requests: List<TtsRequest>): Flow<StreamEvent> =
+        flow<StreamEvent> {
+            for ((index, request) in requests.withIndex()) {
+                var complete: TtsResponse? = null
+                var receivedPcm = false
+                model.streamAudio(request).collect { part ->
+                    check(complete == null) { "unexpected audio after a complete response" }
+                    when (part) {
+                        is TtsAudioPart.Pcm -> {
+                            emit(StreamEvent.Pcm(index, part))
+                            receivedPcm = true
+                        }
+                        is TtsAudioPart.Complete -> {
+                            check(!receivedPcm) { "unexpected complete audio after PCM" }
+                            complete = part.response
+                        }
+                    }
+                }
+                val response = complete
+                check(receivedPcm || response != null) { "empty audio stream" }
+                if (response != null) {
+                    emit(StreamEvent.Fallback(index, response))
+                    return@flow
+                }
+            }
+        }.catch { error ->
+            // 播完已经收到的 PCM，再报告后续合成失败。
+            if (error is CancellationException || error !is Exception) throw error
+            emit(StreamEvent.Failed(error))
+        }.buffer(PCM_LOOKAHEAD_CHUNKS)
 
     private suspend fun drainPcm(nextState: VoicePlayback = VoicePlayback.Idle) {
         val audio = pcmTrack ?: return
@@ -270,5 +313,10 @@ class VoicePlayer(private val context: Context) {
         "flac" -> "flac"
         "wav", "x-wav" -> "wav"
         else -> "wav"
+    }
+
+    private companion object {
+        // 每块最多 8 KiB，44.1 kHz 单声道大约可预读 2.2 秒。
+        const val PCM_LOOKAHEAD_CHUNKS = 24
     }
 }

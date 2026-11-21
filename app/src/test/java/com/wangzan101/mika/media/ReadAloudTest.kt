@@ -60,21 +60,21 @@ class ReadAloudTest {
         assertEquals(listOf(TtsRequest("answ", "alloy", 1.2f, "wav")), requests)
     }
 
-    @Test fun longStreamingReplySplitsAtListBoundariesAndKeepsEveryCharacter() = runTest {
-        val intro = "句".repeat(44) + "。\n\n"
+    @Test fun longStreamingReplyKeepsShortParagraphsAndCompleteListItemsTogether() = runTest {
+        val intro = "句".repeat(24) + "。\n\n"
         val firstItems = "- ${"甲".repeat(30)}\n- ${"乙".repeat(16)}\n"
         val remainingItems = "- ${"丙".repeat(16)}\n- ${"丁".repeat(16)}\n\n"
         val closing = "${"尾".repeat(18)}？"
 
         val requests = streamingRequests(intro + firstItems + remainingItems + closing)
 
-        assertEquals(listOf(intro, firstItems, remainingItems, closing).map { TtsRequest(it, "alloy", 1f, "wav") }, requests)
+        assertEquals(listOf(intro + firstItems, remainingItems + closing).map { TtsRequest(it, "alloy", 1f, "wav") }, requests)
     }
 
     @Test fun splittingAndTheCharacterLimitPreserveWholeGraphemes() = runTest {
-        val beforeEmoji = "甲".repeat(59) + "aa"
+        val beforeEmoji = "甲".repeat(75) + "aa"
         val first = beforeEmoji + "👩‍💻"
-        val text = first + "乙".repeat(61)
+        val text = first + "乙".repeat(77)
 
         val requests = streamingRequests(text)
 
@@ -89,7 +89,7 @@ class ReadAloudTest {
 
         assertEquals(text, requests.joinToString("") { it.text })
         assertEquals(true, requests.dropLast(1).all { it.text.endsWith(" ") })
-        assertEquals(true, requests.all { it.text.trim().length <= 180 })
+        assertEquals(true, requests.all { it.text.trim().length <= 228 })
     }
 
     @Test fun blankTextAndWhitespaceBetweenParagraphsNeverBecomeRequests() = runTest {

@@ -41,8 +41,9 @@ private fun clipAtGraphemeBoundary(text: String, maxChars: Int): String {
     return text.substring(0, end + 1)
 }
 
-// Budget for roughly 60 CJK characters or 180 Latin letters, with room for pauses.
-private const val SPEECH_CHUNK_BUDGET = 180
+// Budget for roughly 76 CJK characters or 228 Latin letters, with room for pauses.
+private const val SPEECH_CHUNK_BUDGET = 228
+private const val MIN_PARAGRAPH_WEIGHT = SPEECH_CHUNK_BUDGET * 2 / 3
 private val CJK_SCRIPTS = setOf(
     Character.UnicodeScript.HAN, Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA,
     Character.UnicodeScript.HANGUL, Character.UnicodeScript.BOPOMOFO,
@@ -78,9 +79,10 @@ private fun splitForSpeech(text: String): List<String> {
             weight += weights[end]
             if (weight > SPEECH_CHUNK_BUDGET) break
             hasSpeech = hasSpeech || grapheme.isNotBlank()
-            if (hasSpeech && graphemes[end].range.last in paragraphEnds) paragraphEnd = end + 1
             end++
-            if (paragraphEnd != 0) break
+            if (hasSpeech && weight >= MIN_PARAGRAPH_WEIGHT && graphemes[end - 1].range.last in paragraphEnds) {
+                paragraphEnd = end
+            }
             // A boundary far from the budget can leave most of the request unused.
             if (weight < SPEECH_CHUNK_BUDGET / 2) continue
             when {
@@ -92,6 +94,7 @@ private fun splitForSpeech(text: String): List<String> {
             }
         }
         val boundary = when {
+            // Keep a short closing paragraph in the same request when it fits.
             end == graphemes.size -> end
             paragraphEnd != 0 -> paragraphEnd
             sentenceEnd > start -> sentenceEnd
