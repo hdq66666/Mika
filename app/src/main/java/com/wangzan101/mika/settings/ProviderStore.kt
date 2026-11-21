@@ -60,6 +60,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -168,6 +169,8 @@ data class Provider(
     val visionOverrides: Map<String, Boolean> = emptyMap(),
     /** 这家每天所有模型、用途合计的已报告 Token 预算；null 不限制。 */
     val dailyTokenBudget: Long? = null,
+    /** 用户标为 TTS 的模型名，独立于对话用途和服务商模型列表。 */
+    val ttsModels: Set<String> = emptySet(),
 ) {
     val key: String get() = ProviderConnection.keyOf(kind, baseUrl, name)
 
@@ -722,6 +725,23 @@ class ProviderStore(
         return true
     }
 
+    /** 设置一个模型的 TTS 用途，也接受服务商列表之外的手填模型。 */
+    @Synchronized
+    fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
+        val p = provider(providerId) ?: return false
+        val id = model.trim().takeIf { it.isNotEmpty() } ?: return false
+        val models = if (enabled) p.ttsModels + id else p.ttsModels - id
+        if (models == p.ttsModels) return true
+        val updated = _providers.value.map { if (it.id == providerId) it.copy(ttsModels = models) else it }
+        try {
+            writeAtomically(configFile, configJson(updated))
+        } catch (_: Exception) {
+            return false
+        }
+        _providers.value = updated
+        return true
+    }
+
     /** 看图模型的「看图定位已验证」(开发者选项里改);看图用主模型时改的是主模型那条配置。没有看图模型时不动。 */
     @Synchronized
     fun setVisionGroundingVerified(verified: Boolean) {
@@ -995,16 +1015,18 @@ class ProviderStore(
 
     /**
      * 声音模型:地址、Key、请求头取这家服务商;不套对话模型的计量(朗读用量由调用方另记)。
-     * 服务商、模型或协议缺失时为 null。合成比一句话慢,读超时放到 120 秒。
+     * 服务商不存在或模型未标为 TTS 时为 null。合成比一句话慢，读超时放到 120 秒。
      */
     fun ttsModel(choice: VoiceChoice, capabilities: TtsCapabilities): TtsModel? {
         val p = provider(choice.providerId) ?: return null
+        val model = choice.model.trim()
+        if (model !in p.ttsModels) return null
         val client = modelHttp.newBuilder().readTimeout(120, TimeUnit.SECONDS).build()
         val header = headers(p.sessionHeader, ModelSession.fresh())
         val key = activeApiKey(p.id) ?: providerKey(p.id)?.let { KeyPoolManager.shared.parseKeys(it).firstOrNull() }
         return when (choice.protocol) {
-            TtsProtocol.OpenAiSpeech -> OpenAiSpeechModel(p.baseUrl, key, choice.model, capabilities, client, header)
-            TtsProtocol.GeminiTts -> GeminiTtsModel(p.baseUrl, key.orEmpty(), choice.model, capabilities, client, header)
+            TtsProtocol.OpenAiSpeech -> OpenAiSpeechModel(p.baseUrl, key, model, capabilities, client, header)
+            TtsProtocol.GeminiTts -> GeminiTtsModel(p.baseUrl, key.orEmpty(), model, capabilities, client, header)
         }
     }
 
@@ -1432,6 +1454,9 @@ class ProviderStore(
             (raw as? JsonPrimitive)?.booleanOrNull?.let { model to it }
         }.toMap(),
         typedModels = o["typedModels"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty(),
+        ttsModels = (o["ttsModels"] as? JsonArray).orEmpty().mapNotNull {
+            (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content?.trim()?.takeIf(String::isNotEmpty)
+        }.toSet(),
         // 旧版本存下的没有这一项:那时每一家都走过「测试并保存」,按测过算
         savedUntested = o["untested"]?.jsonPrimitive?.booleanOrNull ?: false,
         models = o["models"]?.jsonArray?.map { e ->
@@ -1534,6 +1559,7 @@ class ProviderStore(
                             for ((model, sees) in p.visionOverrides) put(model, sees)
                         }
                         if (p.typedModels.isNotEmpty()) putJsonArray("typedModels") { p.typedModels.forEach { add(it) } }
+                        if (p.ttsModels.isNotEmpty()) putJsonArray("ttsModels") { p.ttsModels.forEach { add(it) } }
                         p.models?.let { models ->
                             putJsonArray("models") {
                                 models.forEach { m ->

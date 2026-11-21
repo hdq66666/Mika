@@ -108,28 +108,52 @@ object ModelOptions {
     /**
      * 一个服务商可选的全部模型:记住的列表(合并能力初值;已有配置的用配置里的能力),
      * 再加上已有配置、但列表里没有的模型(例如手动填的),和手填过、还没有配置的([Provider.typedModels])。
+     * 服务商详情可通过 [includeTts] 显示只提供合成接口的模型和用户保存的 TTS 模型。
      * 用户说过能不能看图的([Provider.visionOverrides])按用户说的。
      */
-    fun ofProvider(p: Provider, configs: List<ProviderConfig>): List<ModelOption> = listedOf(p, configs).map { o ->
-        val said = p.visionOverrides[o.id] ?: return@map o
-        o.copy(capabilities = o.capabilities.copy(vision = said), visionByUser = said)
-    }
+    fun ofProvider(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean = false): List<ModelOption> =
+        listedOf(p, configs, includeTts).map { o ->
+            val said = p.visionOverrides[o.id] ?: return@map o
+            o.copy(capabilities = o.capabilities.copy(vision = said), visionByUser = said)
+        }
 
-    private fun listedOf(p: Provider, configs: List<ProviderConfig>): List<ModelOption> {
+    private fun listedOf(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean): List<ModelOption> {
         val saved = configs.filter { it.providerId == p.id }
         val byModel = saved.associateBy { it.model }
-        val listed = merge(p.models.orEmpty(), baseOf(p)).map { o -> byModel[o.id]?.let { o.copy(capabilities = it.capabilities) } ?: o }
+        val base = baseOf(p)
+        val listed = merge(p.models.orEmpty(), base).map { o -> byModel[o.id]?.let { o.copy(capabilities = it.capabilities) } ?: o }
         val rest = saved.filter { c -> listed.none { it.id == c.model } }.map {
             // 列不出模型的那家,模型都是手填的;有列表的,列表后来没了的那个不算手填
             val typed = it.model in p.typedModels || p.models?.isEmpty() == true
             ModelOption(it.model, it.capabilities, toolCallsKnown = false, visionKnown = false, contextKnown = false, typed = typed)
         }
+        val options = listed + rest
+        val knownIds = options.mapTo(mutableSetOf()) { it.id }
+        val tts = if (includeTts) {
+            val catalog = p.models.orEmpty()
+            val speechOnly = catalog.filter { !it.usable && it.unsupportedApis.any(::isSpeechApi) }
+            val voiceModels = (speechOnly.map { it.id } + p.ttsModels).filter(knownIds::add)
+            val titles = catalog.associate { it.id to it.displayName }
+            val speechBase = base.copy(toolCalls = false, vision = false, reasoning = false)
+            voiceModels.map {
+                ModelOption(it, speechBase,
+                    toolCallsKnown = false, visionKnown = false, contextKnown = false,
+                    displayName = titles[it].orEmpty(), chat = false, typed = it in p.typedModels)
+            }
+        } else emptyList()
         // 手填过、还没用在哪个用途上的(没有配置):照样列出来,能力按这家的初值
-        val typed = p.typedModels.filter { m -> listed.none { it.id == m } && rest.none { it.id == m } }.sorted().map {
-            ModelOption(it, baseOf(p), toolCallsKnown = false, visionKnown = false, contextKnown = false, typed = true)
+        val typed = p.typedModels.filter { it !in knownIds }.sorted().map {
+            ModelOption(it, base, toolCallsKnown = false, visionKnown = false, contextKnown = false, typed = true)
         }
-        return listed + rest + typed
+        return options + tts + typed
     }
+
+    private fun isSpeechApi(api: String): Boolean = api.trim().trimEnd('/').lowercase().let {
+        it == "audio/speech" || it.endsWith("/audio/speech") ||
+            it in SPEECH_APIS
+    }
+
+    private val SPEECH_APIS = setOf("speech", "audio-speech", "text-to-speech", "tts", TtsProtocol.OpenAiSpeech.wire, TtsProtocol.GeminiTts.wire)
 }
 
 /**

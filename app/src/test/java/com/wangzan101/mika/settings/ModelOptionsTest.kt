@@ -227,4 +227,22 @@ class ModelOptionsTest {
         assertTrue("已有配置的用配置里的能力", options.first { it.id == "b" }.capabilities.vision)
         assertEquals(emptyList<String>(), ModelOptions.ofProvider(p.copy(models = null), emptyList()).map { it.id })
     }
+
+    @Test fun providerDetailsIncludeSpeechEndpointsAndMarkingsMissingFromTheCatalog() {
+        val p = Provider(
+            "p", "Local", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1",
+            models = listOf(
+                ListedModel("chat"),
+                ListedModel("speech", displayName = "Speech", unsupportedApis = listOf("/v1/audio/speech")),
+                ListedModel("realtime", unsupportedApis = listOf("realtime")),
+            ),
+            ttsModels = setOf("chat", "legacy-tts"),
+        )
+        assertEquals(listOf("chat"), ModelOptions.ofProvider(p, emptyList()).map { it.id })
+        val details = ModelOptions.ofProvider(p, emptyList(), includeTts = true)
+        assertEquals(listOf("chat", "speech", "legacy-tts"), details.map { it.id })
+        assertEquals("Speech", details.single { it.id == "speech" }.displayName)
+        assertFalse(details.single { it.id == "speech" }.canBeMain)
+        assertEquals(setOf("chat", "legacy-tts"), p.ttsModels)
+    }
 }

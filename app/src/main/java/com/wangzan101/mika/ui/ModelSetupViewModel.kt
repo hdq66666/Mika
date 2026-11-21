@@ -289,7 +289,8 @@ data class ModelSetupUi(
     fun options(p: Provider): List<ModelOption> = ModelOptions.ofProvider(p, configs)
 
     /** 一个服务商的全部模型,在用的排前面,其余保持原来的顺序。 */
-    fun sortedOptions(p: Provider): List<ModelOption> = options(p).sortedBy { if (rolesOf(p.id, it.id).isEmpty()) 1 else 0 }
+    fun sortedOptions(p: Provider): List<ModelOption> = ModelOptions.ofProvider(p, configs, includeTts = true)
+        .sortedBy { if (it.id in p.ttsModels || rolesOf(p.id, it.id).isNotEmpty()) 0 else 1 }
 
     /** 实际在用这个模型的用途(含「用主模型」跟过来的),按主模型、看图、轻量的顺序。 */
     fun rolesOf(providerId: String, model: String): List<ModelRole> =
@@ -1016,6 +1017,12 @@ class ModelSetupViewModel(
     fun setModelVision(providerId: String, model: String, sees: Boolean) {
         store.setModelVision(providerId, model, sees)
         sync()
+    }
+
+    fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
+        val saved = store.setTtsModel(providerId, model, enabled)
+        sync()
+        return saved
     }
 
     /** 把 [providerId] 下的 [model] 用作 [role](选择页和「用作」面板都走这里):没有配置的当场建一条。 */

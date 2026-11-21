@@ -45,8 +45,8 @@
     <string name="models_new_key_hint">Yeni anahtarı yapıştırın</string>
     <string name="save">Kaydet</string>
     <string name="models_models">Modeller</string>
-    <string name="models_models_note">Bir modeli ana, görüntü veya hafif model olarak kullanmak için dokunun.</string>
-    <string name="models_no_list_note">Bu sağlayıcının model listesi yok. Modellerinden birini kullanmak için, \“Roller\” altında dokümanlarındaki adı girin.</string>
+    <string name="models_models_note">Rolünü seçmek için bir modele dokunun.</string>
+    <string name="models_no_list_note">Bu sağlayıcı model listesi döndürmüyor. Yukarıdaki alana sağlayıcının belgelerindeki model kimliğini girin.</string>
     <string name="models_untested_note">Bu sağlayıcı test edilmeden kaydedildi, bu yüzden çalışıp çalışmadığı bilinmiyor. Test etmek için bir model seçin veya modellerini listelemek için Yenile\'ye dokunun.</string>
     <string name="models_not_listed">Bu sağlayıcının modelleri henüz listelenmedi.</string>
     <string name="refresh">Yenile</string>
@@ -60,9 +60,11 @@
     <string name="role_main">Ana model</string>
     <string name="role_vision">Görüntü modeli</string>
     <string name="role_light">Hafif model</string>
+    <string name="role_tts">TTS modeli</string>
     <string name="role_main_what">Düşünme ve yapma</string>
     <string name="role_vision_what">Ekran görüntülerine bakar</string>
     <string name="role_light_what">Kontroller ve notlar gibi küçük işler</string>
+    <string name="role_tts_what">Ses modeli ayarlarında seçilebilir</string>
     <string name="role_main_hint">Görevler güvenilir olsun diye araç çağırma özellikli bir model seçin.</string>
     <string name="main_fallback_name">Yedek model %1$d</string>
     <string name="main_fallback_what">Ana model kullanılamadığında devralır</string>
@@ -205,8 +207,9 @@
     <string name="role_voice_what">Mika\'nın konuşmasını ve yanıtları sesli okumasını sağlar</string>
     <string name="voice_enable">Mika\'nın konuşmasına izin ver</string>
     <string name="voice_enable_note">Otomatik okuma açık değilse, konuşma yalnızca Sesli oku\'ya dokunduğunuzda yapılır</string>
-    <string name="voice_provider">Hizmet</string>
-    <string name="voice_no_providers">Önce bir model hizmeti ekleyin (konuşma aynı hizmeti ve anahtarı kullanır).</string>
+    <string name="voice_provider">Sağlayıcı</string>
+    <string name="voice_no_providers">Önce “Model” bölümünden bir sağlayıcı ekleyin.</string>
+    <string name="voice_no_tts_models">“Model → Sağlayıcılar” bölümünde bir model açın ve “Olarak kullan” menüsünde TTS modeli olarak işaretleyin.</string>
     <string name="voice_model_name">Model</string>
     <string name="voice_protocol">API</string>
     <string name="voice_protocol_openai">OpenAI Speech</string>

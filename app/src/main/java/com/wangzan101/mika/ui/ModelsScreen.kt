@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -50,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -69,8 +71,10 @@ import com.wangzan101.mika.settings.RoleChoice
 import com.wangzan101.mika.ui.components.BarIconButton
 import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.ButtonSize
+import com.wangzan101.mika.ui.components.CapabilityTag
 import com.wangzan101.mika.ui.components.MikaButton
 import com.wangzan101.mika.ui.components.MikaSwitch
+import com.wangzan101.mika.ui.components.TagTone
 import com.wangzan101.mika.ui.components.FieldClearButton
 import com.wangzan101.mika.ui.components.FooterNote
 import com.wangzan101.mika.ui.components.GroupCard
@@ -215,10 +219,6 @@ fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActi
     clearAction: (() -> Unit)? = null, clearSelected: Boolean = false,
 ) {
     val c = MikaTheme.colors
-    var filter by rememberSaveable { mutableStateOf("") }
-    val groups = ui.providers.map { it to ui.options(it) }
-    val total = groups.sumOf { it.second.size }
-    val q = filter.trim()
     Page(titleOverride ?: ModelsCopy.roleName(role), onBack) {
         val hint = hintOverride ?: ModelsCopy.roleHint(role)
         if (hint.isNotEmpty()) {
@@ -240,41 +240,16 @@ fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActi
                 RadioRow(ModelsCopy.FALLBACK_CLEAR, selected = clearSelected, onClick = clearAction, first = true)
             }
         }
-        if (total > FILTER_FROM) {
-            GroupLabel(ModelsCopy.PICK_FROM, Modifier.padding(top = 8.dp))
-            Box(Modifier.padding(bottom = 4.dp)) {
-                SearchField(filter, { filter = it }, ModelsCopy.FILTER_HINT, Modifier.testTag("model-filter"))
-            }
-        }
-        var anyShown = false
-        groups.forEach { (p, options) ->
-            val shown = options.filter { (q.isEmpty() || it.id.contains(q, ignoreCase = true)) && exclude?.invoke(p.id, it.id) != true }
-            // 这家列不出模型:手填是唯一的选法
-            val noList = p.models?.isEmpty() == true
-            if (q.isNotEmpty() && shown.isEmpty()) return@forEach
-            anyShown = true
-            val state = ui.listing[p.id]
-            GroupLabel(ModelsCopy.providerName(p))
-            GroupCard {
-                shown.take(PICK_AT_MOST).forEachIndexed { i, o ->
-                    RadioRow(
-                        o.id, selected = pickedOverride?.invoke(p.id, o.id) ?: ui.picked(role, p.id, o.id), onClick = { actions.pick(p.id, o.id) }, first = i == 0,
-                        titleStyle = ModelIdStyle, below = { Tags(o, forVision = role == ModelRole.Vision) },
-                    )
-                }
-                ManualModel(p, ui.manualPick[p.id], first = shown.isEmpty()) { actions.pickManual(p.id, it) }
-            }
-            val manualState = ui.manualPick[p.id]
-            when {
-                manualState is ListState.Failed -> FooterNote(manualState.message, Modifier.testTag("manual-model-failed"), color = c.bad)
-                // 选列表里的模型也可能先试调用(见 ModelSetupUi.probeBeforePick);手填的那一行自己显示进度
-                !noList && manualState == ListState.Running -> FooterNote(ModelSetupCopy.TESTING, Modifier.testTag("pick-probe-running"))
-                state == ListState.Running -> FooterNote(ModelsCopy.LISTING)
-                state is ListState.Failed -> FooterNote(ModelSetupCopy.failed(state.message), color = c.bad)
-                shown.size > PICK_AT_MOST -> FooterNote(ModelsCopy.more(shown.size - PICK_AT_MOST))
-            }
-        }
-        if (q.isNotEmpty() && !anyShown) FooterNote(ModelsCopy.NO_MATCH)
+        ModelPickerRows(
+            groups = ui.providers.map { it to ui.options(it) },
+            pick = actions.pick,
+            isSelected = { providerId, model -> pickedOverride?.invoke(providerId, model) ?: ui.picked(role, providerId, model) },
+            forVision = role == ModelRole.Vision,
+            exclude = exclude,
+            pickManual = actions.pickManual,
+            manualState = ui.manualPick,
+            listing = ui.listing,
+        )
         if (ui.providers.isEmpty()) FooterNote(ModelsCopy.ROLE_EMPTY)
         GroupCard(Modifier.padding(top = 8.dp)) {
             ListRow(MikaIcons.Plus, ModelsCopy.ADD_PROVIDER, first = true, titleColor = c.accent, tone = TileTone.Accent, onClick = actions.addProvider)
@@ -283,7 +258,65 @@ fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActi
     }
 }
 
-/** 手填模型名(列表里没有、或服务不提供列表):照服务商文档填;点「使用」先试调用一次([state] 是进度),通了才选上并记为手填。 */
+/** 按服务商分组的单选列表，供模型用途页和声音模型共用。 */
+@Composable
+internal fun ModelPickerRows(
+    groups: List<Pair<Provider, List<ModelOption>>>,
+    pick: (String, String) -> Unit,
+    isSelected: (String, String) -> Boolean,
+    tts: Boolean = false,
+    forVision: Boolean = false,
+    exclude: ((String, String) -> Boolean)? = null,
+    pickManual: ((String, String) -> Unit)? = null,
+    manualState: Map<String, ListState> = emptyMap(),
+    listing: Map<String, ListState> = emptyMap(),
+) {
+    val c = MikaTheme.colors
+    var filter by rememberSaveable { mutableStateOf("") }
+    val q = filter.trim()
+    if (groups.sumOf { it.second.size } > FILTER_FROM) {
+        GroupLabel(ModelsCopy.PICK_FROM, Modifier.padding(top = 8.dp))
+        Box(Modifier.padding(bottom = 4.dp)) {
+            SearchField(filter, { filter = it }, ModelsCopy.FILTER_HINT, Modifier.testTag("model-filter"))
+        }
+    }
+    var anyShown = false
+    groups.forEach { (provider, options) ->
+        val shown = options.filter { (q.isEmpty() || it.id.contains(q, ignoreCase = true)) && exclude?.invoke(provider.id, it.id) != true }
+        if (shown.isEmpty() && (q.isNotEmpty() || pickManual == null)) return@forEach
+        anyShown = true
+        GroupLabel(ModelsCopy.providerName(provider))
+        val manual = manualState[provider.id]
+        GroupCard {
+            shown.take(PICK_AT_MOST).forEachIndexed { i, option ->
+                RadioRow(
+                    option.id, selected = isSelected(provider.id, option.id),
+                    onClick = { pick(provider.id, option.id) }, first = i == 0, titleStyle = ModelIdStyle,
+                    below = {
+                        if (tts) CapabilityTag(tr(R.string.role_tts), TagTone.Accent)
+                        else Tags(option, forVision = forVision)
+                    },
+                )
+            }
+            if (pickManual != null) {
+                ManualModel(provider, manual, first = shown.isEmpty()) { pickManual(provider.id, it) }
+            }
+        }
+        val state = listing[provider.id]
+        when {
+            manual is ListState.Failed -> FooterNote(manual.message, Modifier.testTag("manual-model-failed"), color = c.bad)
+            // 选列表里的模型也可能先试调用(见 ModelSetupUi.probeBeforePick);手填的那一行自己显示进度
+            provider.models?.isEmpty() != true && manual == ListState.Running ->
+                FooterNote(ModelSetupCopy.TESTING, Modifier.testTag("pick-probe-running"))
+            state == ListState.Running -> FooterNote(ModelsCopy.LISTING)
+            state is ListState.Failed -> FooterNote(ModelSetupCopy.failed(state.message), color = c.bad)
+            shown.size > PICK_AT_MOST -> FooterNote(ModelsCopy.more(shown.size - PICK_AT_MOST))
+        }
+    }
+    if (q.isNotEmpty() && !anyShown) FooterNote(ModelsCopy.NO_MATCH)
+}
+
+/** 手填列表里找不到的模型名，由调用方处理提交。 */
 @Composable
 internal fun ManualModel(p: Provider, state: ListState?, first: Boolean, onUse: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
@@ -316,6 +349,8 @@ class ProviderDetailActions(
     val use: (ModelRole, String) -> Unit = { _, _ -> },
     /** 用户说这家的一个模型能不能看图(「用作」面板里的开关)。 */
     val setVision: (String, Boolean) -> Unit = { _, _ -> },
+    /** 标记这家的一个模型，让它出现在声音模型选择页。 */
+    val setTts: (String, Boolean) -> Boolean = { _, _ -> false },
     val showAll: () -> Unit = {},
     /** 在用、没核实过的手填模型再试调用一次(见 [ModelSetupUi.unverified])。 */
     val retest: () -> Unit = {},
@@ -343,7 +378,7 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
     var editingBudget by remember { mutableStateOf(false) }
     var customBudget by remember { mutableStateOf("") }
     var budgetSaveFailed by remember { mutableStateOf(false) }
-    var using by remember { mutableStateOf<ModelOption?>(null) }
+    var using by remember { mutableStateOf<String?>(null) }
     val state = ui.listing[p.id]
     val list = ui.sortedOptions(p)
     Page(ModelsCopy.providerName(p), onBack) {
@@ -454,15 +489,16 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
             GroupLabel(ModelsCopy.MODELS, Modifier.weight(1f))
             BarIconButton(MikaIcons.Refresh, ModelsCopy.REFRESH, actions.refresh, enabled = state != ListState.Running)
         }
-        if (list.isNotEmpty()) {
-            GroupCard {
-                list.take(MODEL_PREVIEW).forEachIndexed { i, o -> ModelRow(o, ui.rolesOf(p.id, o.id), first = i == 0) { using = o } }
-                if (list.size > MODEL_PREVIEW) {
-                    ListRow(null, ModelsCopy.viewAll(list.size), titleColor = c.accent, onClick = actions.showAll) { RowChevron() }
-                }
+        GroupCard {
+            list.take(MODEL_PREVIEW).forEachIndexed { i, o ->
+                ModelRow(o, ui.rolesOf(p.id, o.id), tts = o.id in p.ttsModels, first = i == 0) { using = o.id }
             }
-            FooterNote(ModelsCopy.MODELS_NOTE)
+            if (list.size > MODEL_PREVIEW) {
+                ListRow(null, ModelsCopy.viewAll(list.size), titleColor = c.accent, onClick = actions.showAll) { RowChevron() }
+            }
+            ManualModel(p, state = null, first = list.isEmpty()) { using = it }
         }
+        if (list.isNotEmpty()) FooterNote(ModelsCopy.MODELS_NOTE)
         // 跳过测试直接存下的:说清它还没测过,别说成「这家不提供模型列表」——那个说法对它不成立
         val untested = ui.untested(p)
         val unverified = ui.unverified(p)
@@ -504,7 +540,7 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
         onDismiss = { editingBudget = false },
         saveError = if (budgetSaveFailed) stringResource(R.string.models_daily_token_budget_save_failed) else null,
     )
-    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onVision = { actions.setVision(o.id, it) }, onDismiss = { using = null }) }
+    using?.let { model -> UseAsSheet(ui, p, model, actions, onDismiss = { using = null }) }
     if (changingKey) {
         var key by remember { mutableStateOf("") }
         var notice by remember { mutableStateOf(ApiKeyText.Notice.None) }
@@ -763,7 +799,7 @@ private fun AccountConnection(ui: ModelSetupUi, p: Provider, state: ListState?, 
 fun AllModelsContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetailActions, onBack: () -> Unit) {
     val c = MikaTheme.colors
     var filter by rememberSaveable { mutableStateOf("") }
-    var using by remember { mutableStateOf<ModelOption?>(null) }
+    var using by remember { mutableStateOf<String?>(null) }
     val state = ui.listing[p.id]
     val all = ui.sortedOptions(p)
     val q = filter.trim()
@@ -784,7 +820,7 @@ fun AllModelsContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetailActio
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
                 itemsIndexed(shown, key = { _, o -> o.id }) { i, o ->
                     Box(Modifier.fillMaxWidth().clip(rowShape(i, shown.size)).background(c.surface)) {
-                        ModelRow(o, ui.rolesOf(p.id, o.id), first = i == 0) { using = o }
+                        ModelRow(o, ui.rolesOf(p.id, o.id), tts = o.id in p.ttsModels, first = i == 0) { using = o.id }
                     }
                 }
                 item {
@@ -792,11 +828,12 @@ fun AllModelsContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetailActio
                         if (q.isNotEmpty() && shown.isEmpty()) ModelsCopy.NO_MATCH else ModelsCopy.allModelsNote(all.size),
                         Modifier.padding(top = 10.dp),
                     )
+                    GroupCard { ManualModel(p, state = null, first = true) { using = it } }
                 }
             }
         }
     }
-    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onVision = { actions.setVision(o.id, it) }, onDismiss = { using = null }) }
+    using?.let { model -> UseAsSheet(ui, p, model, actions, onDismiss = { using = null }) }
 }
 
 /** 一张卡拆成懒加载的行时,每行的圆角:首行上圆、末行下圆。 */
@@ -808,7 +845,7 @@ private fun rowShape(i: Int, n: Int): RoundedCornerShape {
 
 /** 模型一行:模型名(等宽)和标签,右边标着它在给哪些用途干活。 */
 @Composable
-private fun ModelRow(o: ModelOption, roles: List<ModelRole>, first: Boolean, onClick: () -> Unit) {
+private fun ModelRow(o: ModelOption, roles: List<ModelRole>, tts: Boolean, first: Boolean, onClick: () -> Unit) {
     Column {
         if (!first) Hairline(start = 16.dp)
         Row(
@@ -817,7 +854,7 @@ private fun ModelRow(o: ModelOption, roles: List<ModelRole>, first: Boolean, onC
         ) {
             Column(Modifier.weight(1f)) {
                 Text(o.id, style = ModelIdStyle, color = MikaTheme.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Box(Modifier.padding(top = 4.dp)) { Tags(o, accent = false) }
+                Box(Modifier.padding(top = 4.dp)) { Tags(o, accent = false, tts = tts) }
             }
             roles.forEach { StatusPill(ModelsCopy.roleName(it), PillTone.Accent) }
             RowChevron()
@@ -826,30 +863,44 @@ private fun ModelRow(o: ModelOption, roles: List<ModelRole>, first: Boolean, onC
 }
 
 /**
- * 点一个模型后从底部升起:「<服务商> · 用作」主模型 / 看图模型 / 轻量模型,点了马上生效;
- * 下面是「能看图」开关:列表没写的模型由用户说了算,列表写了的也能改。
+ * 点一个模型后从底部打开「用作」面板。TTS 标记可独立启用，支持手填模型。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, onUse: (ModelRole) -> Unit, onVision: (Boolean) -> Unit, onDismiss: () -> Unit) {
+private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, actions: ProviderDetailActions, onDismiss: () -> Unit) {
     val c = MikaTheme.colors
+    val option = ui.options(p).firstOrNull { it.id == model }
+    val tts = model in p.ttsModels
+    var saveFailed by remember(p.id, model) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.surface, shape = MikaShapes.SheetTop) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 8.dp).testTag("use-as")) {
             Text(model, Modifier.padding(horizontal = 16.dp), style = ModelIdStyle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(ModelsCopy.useAsSubtitle(ModelsCopy.providerName(p)), Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 6.dp), style = MikaType.Caption, color = c.ink3)
-            ModelRole.entries.forEachIndexed { i, role ->
-                val on = ui.picked(role, p.id, model)
-                RadioRow(
-                    ModelsCopy.roleName(role), selected = on, first = i == 0,
-                    subtitle = if (on) ModelsCopy.IN_USE else ModelsCopy.roleWhat(role),
-                    onClick = { onUse(role); onDismiss() },
-                )
+            if (option != null) {
+                ModelRole.entries.forEachIndexed { i, role ->
+                    val on = ui.picked(role, p.id, model)
+                    RadioRow(
+                        ModelsCopy.roleName(role), selected = on, first = i == 0,
+                        subtitle = if (on) ModelsCopy.IN_USE else ModelsCopy.roleWhat(role),
+                        onClick = { actions.use(role, model); onDismiss() },
+                    )
+                }
             }
-            ui.options(p).firstOrNull { it.id == model }?.let { o ->
+            ListRow(
+                null, stringResource(R.string.role_tts), stringResource(R.string.role_tts_what),
+                first = option == null,
+                modifier = Modifier.testTag("model-use-tts").toggleable(value = tts, role = Role.Switch) {
+                    saveFailed = !actions.setTts(model, it)
+                },
+            ) {
+                MikaSwitch(tts, null)
+            }
+            if (saveFailed) FooterNote(tr(R.string.model_context_save_failed), color = c.bad)
+            option?.let { o ->
                 val usedForVision = ModelRole.Vision in ui.rolesOf(p.id, model)
                 val sees = ModelOptions.seesImages(o.capabilities.vision, o.visionByUser, usedForVision)
                 ListRow(null, ModelsCopy.SEES_IMAGES, ModelsCopy.seesNote(o, usedForVision)) {
-                    MikaSwitch(sees, onVision, Modifier.testTag("model-sees-images"))
+                    MikaSwitch(sees, { actions.setVision(model, it) }, Modifier.testTag("model-sees-images"))
                 }
             }
             ListRow(null, ModelSetupCopy.CANCEL, titleColor = c.ink2, onClick = onDismiss)

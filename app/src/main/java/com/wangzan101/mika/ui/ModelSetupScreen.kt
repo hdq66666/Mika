@@ -211,6 +211,7 @@ fun ModelSetupScreen(
                     remove = { vm.removeProvider(p.id); openProvider = null; allModels = false },
                     use = { r, model -> vm.pick(r, p.id, model) },
                     setVision = { model, sees -> vm.setModelVision(p.id, model, sees) },
+                    setTts = { model, enabled -> vm.setTtsModel(p.id, model, enabled) },
                     showAll = { allModels = true },
                     retest = { vm.retest(p.id) },
                     // ChatGPT 照旧直接去浏览器登录;xAI、OpenRouter 先打开说明面板
@@ -1244,9 +1245,10 @@ private fun ModelContextControl(ui: ModelSetupUi, role: ModelRole,
 /** 模型的能力标签;[accent] 为假时一律中性色(列表行里强调色留给「在用」的胶囊)。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun Tags(o: ModelOption, forVision: Boolean = false, accent: Boolean = true) {
+internal fun Tags(o: ModelOption, forVision: Boolean = false, accent: Boolean = true, tts: Boolean = false) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         ModelSetupCopy.tags(o, forVision).forEach { (text, strong) -> CapabilityTag(text, if (strong && accent) TagTone.Accent else TagTone.Neutral) }
+        if (tts) CapabilityTag(stringResource(R.string.role_tts), TagTone.Accent)
     }
 }
 

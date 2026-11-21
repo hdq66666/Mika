@@ -17,6 +17,7 @@ import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.model.Role
 import com.wangzan101.mika.core.model.StopReason
 import com.wangzan101.mika.core.model.ToolSpec
+import com.wangzan101.mika.core.model.TtsCapabilities
 import com.wangzan101.mika.core.model.Usage
 import com.wangzan101.mika.core.search.GoogleGroundingSearch
 import com.wangzan101.mika.core.search.WebSearchResult
@@ -254,6 +255,61 @@ class ProviderStoreTest {
 
     private fun connected(s: ProviderStore, name: String = "P", key: String = "k") =
         s.connect(name, ProviderConfig.Kind.OpenAiCompat, "https://${name.lowercase()}.test/v1", key, listOf(ListedModel("m1"), ListedModel("m2")))
+
+    @Test fun ttsMarkingsPersistIndependentlyOfChatRolesAndProviderRefresh() {
+        val s = store()
+        val p = connected(s)
+        val other = connected(s, "Other")
+        assertTrue(p.ttsModels.isEmpty())
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+
+        assertTrue(s.setTtsModel(p.id, "m1", true))
+        assertTrue(s.setTtsModel(p.id, " manual-tts ", true))
+        assertTrue(s.setTtsModel(p.id, "m1", true))
+        s.rememberModels(p.id, listOf(ListedModel("m2")))
+        val reconnected = s.connect(p.name, p.kind, p.baseUrl, null, emptyList())
+        assertEquals(p.id, reconnected.id)
+        assertEquals(setOf("m1", "manual-tts"), reconnected.ttsModels)
+        assertTrue(s.provider(other.id)!!.ttsModels.isEmpty())
+
+        val reopened = store()
+        assertEquals(setOf("m1", "manual-tts"), reopened.provider(p.id)!!.ttsModels)
+        assertEquals("m1", reopened.configFor(ModelRole.Main)?.model)
+        assertTrue(reopened.setTtsModel(p.id, "m1", false))
+        assertEquals(setOf("manual-tts"), store().provider(p.id)!!.ttsModels)
+        assertEquals("m1", reopened.configFor(ModelRole.Main)?.model)
+        assertFalse(reopened.setTtsModel(p.id, " ", true))
+        assertFalse(reopened.setTtsModel("missing", "m1", true))
+    }
+
+    @Test fun ttsAdapterRequiresThisProvidersModelToBeMarked() {
+        val s = store()
+        val p = connected(s)
+        val other = connected(s, "Other")
+        val choice = VoiceChoice(p.id, " manual-tts ", TtsProtocol.OpenAiSpeech)
+        val capabilities = TtsCapabilities()
+        assertNull(s.ttsModel(choice, capabilities))
+        assertTrue(s.setTtsModel(other.id, "manual-tts", true))
+        assertNull(s.ttsModel(choice, capabilities))
+
+        assertTrue(s.setTtsModel(p.id, choice.model, true))
+        assertEquals("manual-tts", s.ttsModel(choice, capabilities)?.name)
+        assertNull(s.ttsModel(choice.copy(model = "m1"), capabilities))
+        assertTrue(s.setTtsModel(p.id, choice.model, false))
+        assertNull(s.ttsModel(choice, capabilities))
+    }
+
+    @Test fun failedTtsMarkingSaveLeavesTheActiveAndPersistedValuesAlone() {
+        val s = store()
+        val p = connected(s)
+        assertTrue(s.setTtsModel(p.id, "m1", true))
+        val blocked = File(tmp.root, "providers.json.tmp")
+        assertTrue(blocked.mkdir())
+        assertFalse(s.setTtsModel(p.id, "m2", true))
+        assertEquals(setOf("m1"), s.provider(p.id)!!.ttsModels)
+        assertTrue(blocked.delete())
+        assertEquals(setOf("m1"), store().provider(p.id)!!.ttsModels)
+    }
 
     @Test fun keyChangeInvalidatesAllowanceForOnlyThatProvider() {
         val store = store()

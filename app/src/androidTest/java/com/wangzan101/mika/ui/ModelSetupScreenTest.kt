@@ -7,6 +7,8 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -284,6 +286,52 @@ class ModelSetupScreenTest {
         compose.awaitOne(ModelSetupCopy.CANCEL).performClick()
         compose.waitForIdle()
         compose.onNodeWithText(ModelsCopy.IN_USE).assertDoesNotExist()
+    }
+
+    @Test fun useAsSheetCanToggleTtsIndependentlyForMultipleModels() {
+        var provider by mutableStateOf(deepseek)
+        val actions = ProviderDetailActions(setTts = { model, enabled ->
+            provider = provider.copy(ttsModels = if (enabled) provider.ttsModels + model else provider.ttsModels - model)
+            true
+        })
+        compose.setContent {
+            MikaTheme { ProviderDetailContent(connected().copy(providers = listOf(provider)), provider, actions, onBack = {}) }
+        }
+        fun openRole(model: String) {
+            compose.onNodeWithTag("model-$model").performScrollTo().performClick()
+            compose.awaitOne(ModelsCopy.useAsSubtitle("DeepSeek")).assertIsDisplayed()
+        }
+        val tts = compose.onNodeWithTag("model-use-tts")
+        openRole("deepseek-chat")
+        compose.awaitOne(ModelsCopy.IN_USE).assertIsDisplayed()
+        tts.assertIsOff().performClick().assertIsOn()
+        compose.awaitOne(ModelSetupCopy.CANCEL).performClick()
+        openRole("deepseek-coder")
+        tts.assertIsOff().performClick().assertIsOn()
+        compose.awaitOne(ModelSetupCopy.CANCEL).performClick()
+        openRole("deepseek-chat")
+        tts.assertIsOn().performClick().assertIsOff()
+        assertEquals(setOf("deepseek-coder"), provider.ttsModels)
+    }
+
+    @Test fun providerWithoutModelListCanMarkAManualTtsModel() {
+        val provider = deepseek.copy(models = emptyList())
+        val marked = mutableListOf<Pair<String, Boolean>>()
+        compose.setContent {
+            MikaTheme {
+                ProviderDetailContent(
+                    connected().copy(providers = listOf(provider), configs = emptyList(), roles = RoleChoices()),
+                    provider,
+                    ProviderDetailActions(setTts = { model, enabled -> marked.add(model to enabled) }),
+                    onBack = {},
+                )
+            }
+        }
+        compose.onNodeWithTag("manual-model").performScrollTo().performTextInput("fishaudio/drama-3-int4")
+        compose.onNodeWithTag("manual-model-use").performClick()
+        compose.awaitOne(ModelsCopy.useAsSubtitle("DeepSeek")).assertIsDisplayed()
+        compose.onNodeWithTag("model-use-tts").performClick()
+        assertEquals(listOf("fishaudio/drama-3-int4" to true), marked)
     }
 
     @Test fun allModelsSearchesAndRefreshes() {
