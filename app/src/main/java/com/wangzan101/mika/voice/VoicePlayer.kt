@@ -35,8 +35,9 @@ sealed interface VoicePlayback {
 }
 
 /**
- * 本机朗读。流式 PCM 数据到达后送入 AudioTrack，已合成的音频交给 MediaPlayer。
- * 同一时间只播一条。播放结束、出错或停止时释放音频焦点。
+ * 本机朗读。流式 PCM 数据到达后送入 AudioTrack，已合成的音频写缓存文件交给 MediaPlayer。
+ * 同一时间只播一条,新的替换旧的:每次开播领一个代次,prepare 在路上的回调、旧播放器上的回调一律不落地。
+ * 申请系统音频焦点(语音内容、短暂独占),来电或别的 App 出声时暂停/降低,播放结束、出错或被停下来时释放。
  */
 class VoicePlayer(private val context: Context) {
     private val _state = MutableStateFlow<VoicePlayback>(VoicePlayback.Idle)
@@ -47,6 +48,7 @@ class VoicePlayer(private val context: Context) {
     private var pendingPlayback: Job? = null
     private var file: File? = null
     private var focus: AudioFocusRequest? = null
+    private val tickets = PlaybackTickets()
     private val audioManager by lazy { context.getSystemService(AudioManager::class.java) }
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -54,8 +56,8 @@ class VoicePlayer(private val context: Context) {
         .build()
 
     /** 播一段合成好的音频;格式从 [mime] 猜扩展名,MediaPlayer 按文件内容解码。 */
-    suspend fun play(bytes: ByteArray, mime: String) = loadAndPlay {
-        prepareFile(bytes, mime)
+    suspend fun play(bytes: ByteArray, mime: String) = loadAndPlay { ticket ->
+        prepareFile(ticket, bytes, mime)
     }
 
     /** 在服务支持时边合成边播，其他服务或语速继续使用完整音频响应。 */
@@ -72,9 +74,9 @@ class VoicePlayer(private val context: Context) {
         requests: List<TtsRequest>,
         streaming: Boolean,
         onStarted: () -> Unit = {},
-    ) = loadAndPlay {
+    ) = loadAndPlay { ticket ->
         val fallback = if (streaming && model is StreamingTtsModel) {
-            val response = playStreams(model, requests, onStarted)
+            val response = playStreams(ticket, model, requests, onStarted)
             drainPcm(if (response == null) VoicePlayback.Idle else VoicePlayback.Loading)
             response ?: return@loadAndPlay
         } else {
@@ -85,19 +87,21 @@ class VoicePlayer(private val context: Context) {
             val audio = if (fallback?.index == index) fallback.response else model.synthesize(requests[index])
             _state.value = VoicePlayback.Loading
             val completion = if (index < requests.lastIndex) CompletableDeferred<VoicePlayback>() else null
-            prepareFile(audio.bytes, audio.mime, { if (index == 0) onStarted() }, completion)
+            prepareFile(ticket, audio.bytes, audio.mime, { if (index == 0) onStarted() }, completion)
             val result = completion?.await()
             if (result is VoicePlayback.Error) error(result.message)
         }
     }
 
-    private suspend fun loadAndPlay(block: suspend () -> Unit) = withContext(Dispatchers.Main.immediate) {
+    private suspend fun loadAndPlay(block: suspend (Long) -> Unit) = withContext(Dispatchers.Main.immediate) {
         stop()
+        // 先领代次再挂起:合成/写文件期间来了新请求,本次代次即作废,后续回调一律不落地
+        val ticket = tickets.begin()
         val job = currentCoroutineContext().job
         pendingPlayback = job
         _state.value = VoicePlayback.Loading
         try {
-            block()
+            block(ticket)
         } catch (e: CancellationException) {
             if (pendingPlayback === job) release(VoicePlayback.Idle)
             throw e
@@ -116,6 +120,7 @@ class VoicePlayer(private val context: Context) {
     }
 
     private suspend fun playStreams(
+        ticket: Long,
         model: StreamingTtsModel,
         requests: List<TtsRequest>,
         onStarted: () -> Unit,
@@ -134,7 +139,7 @@ class VoicePlayer(private val context: Context) {
                             drainPcm(VoicePlayback.Loading)
                         }
                     }
-                    playPcmChunk(part) { if (event.index == 0) onStarted() }
+                    playPcmChunk(ticket, part) { if (event.index == 0) onStarted() }
                     playingIndex = event.index
                 }
                 is StreamEvent.Fallback -> fallback = event
@@ -181,15 +186,21 @@ class VoicePlayer(private val context: Context) {
     private suspend fun drainPcm(nextState: VoicePlayback = VoicePlayback.Idle) {
         val audio = pcmTrack ?: return
         audio.drain()
-        release(nextState)
+        // 只收 PCM 资源:流式会话可能还在继续(格式变化/回退到整段),代次不能作废
+        pcmTrack = null
+        runCatching { audio.close() }
+        focus?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
+        focus = null
+        _state.value = nextState
     }
 
-    private suspend fun playPcmChunk(chunk: TtsAudioPart.Pcm, onStarted: () -> Unit) {
+    private suspend fun playPcmChunk(ticket: Long, chunk: TtsAudioPart.Pcm, onStarted: () -> Unit) {
         val first = pcmTrack == null
         val audio = pcmTrack ?: PcmAudioTrack(attributes, chunk.sampleRate, chunk.channels).also { track ->
             pcmTrack = track
             check(requestFocus { change ->
-                if (pcmTrack === track) {
+                // 代次作废或换了新轨道后,旧轨道上的焦点回调一律忽略
+                if (pcmTrack === track && tickets.owns(ticket)) {
                     when (change) {
                         AudioManager.AUDIOFOCUS_LOSS -> stop()
                         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> track.pause()
@@ -212,6 +223,7 @@ class VoicePlayer(private val context: Context) {
     }
 
     private suspend fun prepareFile(
+        ticket: Long,
         bytes: ByteArray,
         mime: String,
         onStarted: () -> Unit = {},
@@ -229,36 +241,39 @@ class VoicePlayer(private val context: Context) {
                 dir.mkdirs()
                 f.writeBytes(bytes)
             }
-        } catch (e: Exception) {
-            f.delete()
-            throw e
-        }
-        file = f
-        try {
-            val media = MediaPlayer()
-            player = media
-            media.apply {
+            // 写文件期间来了新请求:本次代次作废,不建播放器、不碰状态(文件由 finally 清掉)
+            if (!tickets.owns(ticket)) return
+            file = f
+            val mp = MediaPlayer().apply {
                 setAudioAttributes(attributes)
                 setDataSource(f.absolutePath)
                 setOnPreparedListener { prepared ->
-                    if (player !== prepared) return@setOnPreparedListener
-                    if (requestFocus { change -> onMediaFocusChange(prepared, change) }) {
-                        prepared.start()
+                    if (!tickets.owns(ticket) || player !== prepared) return@setOnPreparedListener
+                    if (requestFocus(ticket, prepared)) {
                         _state.value = VoicePlayback.Playing
                         onStarted()
+                        prepared.start()
                     } else {
                         finishSegment(VoicePlayback.Error("audio focus is not available"))
                     }
                 }
-                setOnCompletionListener { if (player === it) finishSegment(VoicePlayback.Idle) }
+                setOnCompletionListener { if (tickets.owns(ticket) && player === it) finishSegment(VoicePlayback.Idle) }
                 setOnErrorListener { failed, what, extra ->
-                    if (player === failed) finishSegment(VoicePlayback.Error("player error $what/$extra"))
+                    if (tickets.owns(ticket) && player === failed) finishSegment(VoicePlayback.Error("player error $what/$extra"))
                     true
                 }
-                prepareAsync()
             }
+            player = mp
+            mp.prepareAsync()
+        } catch (e: CancellationException) {
+            if (tickets.owns(ticket)) release(VoicePlayback.Idle)
+            throw e
         } catch (e: Exception) {
-            finishSegment(VoicePlayback.Error(e.message ?: "cannot play audio"))
+            // 代次已作废的旧请求出错时静默收尾,不盖掉新请求的状态
+            if (tickets.owns(ticket)) finishSegment(VoicePlayback.Error(e.message ?: "cannot play audio"))
+        } finally {
+            // 没落地的临时文件(被新请求顶替、中途取消)不留盘上
+            if (file !== f) f.delete()
         }
     }
 
@@ -267,17 +282,24 @@ class VoicePlayer(private val context: Context) {
 
     fun fail(message: String) = finish(VoicePlayback.Error(message))
 
-    private fun onMediaFocusChange(media: MediaPlayer, change: Int) {
-        if (player !== media) return
-        when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> stop()
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (media.isPlaying) media.pause()
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> media.setVolume(0.2f, 0.2f)
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                media.setVolume(1f, 1f)
-                if (!media.isPlaying) runCatching { media.start() }
+    private fun requestFocus(ticket: Long, mp: MediaPlayer): Boolean {
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(attributes)
+            .setOnAudioFocusChangeListener { change ->
+                // 焦点回调挂在旧播放器上时,代次和实例都对不上,直接忽略
+                if (!tickets.owns(ticket) || player !== mp) return@setOnAudioFocusChangeListener
+                when (change) {
+                    AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (mp.isPlaying) mp.pause()
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> mp.setVolume(0.2f, 0.2f)
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        mp.setVolume(1f, 1f)
+                        if (!mp.isPlaying) runCatching { mp.start() }
+                    }
+                }
             }
-        }
+            .build()
+        focus = req
+        return audioManager.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
 
     private fun requestFocus(onFocusChange: (Int) -> Unit): Boolean {
@@ -297,8 +319,11 @@ class VoicePlayer(private val context: Context) {
     }
 
     private fun release(state: VoicePlayback) {
-        runCatching { player?.release() }
+        // 作废当前代次:prepare 在路上的回调、旧播放器上的回调此后一律丢弃
+        tickets.invalidate()
+        val oldPlayer = player
         player = null
+        runCatching { oldPlayer?.release() }
         runCatching { pcmTrack?.close() }
         pcmTrack = null
         focus?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
