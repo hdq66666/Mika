@@ -109,9 +109,8 @@ interface SignInBrowser {
 }
 
 /**
- * 「添加服务商」表单。[noList] 为真时上次测试没列出模型:要先填 [model](手填的模型名),再测试就用它试调用。
- * [manual] 为真是用户点了「手动填写模型名」(或列模型出错后自动展开):随时都能填,填了就用它试调用,列表有没有、
- * 列不列得出都不影响。[name] 是自定义服务商的名字(只有自定义才填,可不填,见 [providerName])。
+ * 「添加服务商」表单。[noList] 为真时上次测试没列出模型，可填 [model] 继续配置。
+ * [manual] 为真时也显示手填模型名。[name] 是自定义服务商的名字(只有自定义才填,可不填,见 [providerName])。
  */
 data class AddForm(
     val preset: String,
@@ -208,9 +207,6 @@ data class AddForm(
     /** 这家要放会话号的请求头名:选的预设声明了的用它;自定义的地址对得上某个预设也用那个预设的。 */
     val sessionHeader: String? get() = presetFor(preset).sessionHeader ?: ProviderPresets.forBaseUrl(baseUrl.trim())?.sessionHeader
 
-    /** 这家自己的模型名里的词(见 [ProviderPreset.familyTokens]):选的预设给了的用它,否则按地址对得上的预设。 */
-    val familyTokens: List<String> get() = presetFor(preset).familyTokens.ifEmpty { ModelOptions.familyOf(baseUrl) }
-
     companion object {
         fun of(p: ProviderPreset) = AddForm(p.label, p.kind, p.baseUrl, "")
         fun presetFor(label: String): ProviderPreset = ProviderPresets.all.firstOrNull { it.label == label } ?: ProviderPresets.custom
@@ -247,21 +243,12 @@ data class ModelSetupUi(
     val accountSignIn: AccountSignInUi = AccountSignInUi(),
     /** 刚用账号登录成功的服务商 id:界面打开它的详情页(看账号和模型、设主模型),打开后清掉。 */
     val signedInProvider: String? = null,
-    /**
-     * 刚存下服务商时的说明:试调用先试的模型没通过、主模型用了哪个,或一个都没通过、要用户自己选
-     * (见 [ModelSetupViewModel.testAndSave]);或这家是跳过测试存下的(见 [ModelSetupViewModel.saveWithoutTest])。
-     * 再测试、选了主模型时清掉。
-     */
+    /** 直接保存服务商或保存角色时的说明。 */
     val probeNote: String? = null,
-    /**
-     * 刚存下、还没有哪个模型试通过过的服务商 id:在它里面选主模型时先试调用(见 [probeBeforePick]);选好了清掉。
-     * 两个来源:试调用的模型一个都没通过,或用户跳过测试直接存下。
-     */
-    val pickToProbe: String? = null,
-    /** 选择页里手填模型名后试调用的进度(按服务商 id)。 */
+    /** 选择页保存模型的进度，按服务商 id。 */
     val manualPick: Map<String, ListState> = emptyMap(),
-    /** 服务商页「重新测试」的进度(按服务商 id)。 */
-    val retest: Map<String, ListState> = emptyMap(),
+    /** 服务商页的测试进度，按服务商 id 和模型名。 */
+    val retest: Map<Pair<String, String>, ListState> = emptyMap(),
     /** 语音转文字现在的选择,和这台手机自带识别的能力(给用途卡片和选择页用)。 */
     val speech: SpeechChoice = SpeechChoice.Auto,
     val systemSpeech: SystemCapability = SystemCapability(available = false, onDevice = false),
@@ -271,13 +258,6 @@ data class ModelSetupUi(
     /** 还没有服务商时表单总是展开。 */
     val showForm: Boolean get() = formOpen || providers.isEmpty()
 
-    /**
-     * 在 [providerId] 里选 [role] 要先试调用(走 [ModelSetupViewModel.pickManual]):刚存下、没有一个模型试通过的那家,
-     * 或跳过测试存下、还没测过的那家([Provider.savedUntested],重开 App 后也算)选主模型。
-     */
-    fun probeBeforePick(role: ModelRole, providerId: String): Boolean = role == ModelRole.Main &&
-        (providerId == pickToProbe || providers.firstOrNull { it.id == providerId }?.savedUntested == true)
-
     /** 选好了主模型就能「下一步」。 */
     val canNext: Boolean get() = roles.main != null
 
@@ -286,11 +266,14 @@ data class ModelSetupUi(
 
     fun providerOf(cfg: ProviderConfig): Provider? = providers.firstOrNull { it.id == cfg.providerId }
 
-    /** 一个服务商可选的全部模型(记住的列表加已有配置)。 */
+    /** 对话用途可选的模型。服务商详情同时显示 TTS 模型。 */
     fun options(p: Provider): List<ModelOption> = ModelOptions.ofProvider(p, configs)
 
+    fun isTtsOnlyProvider(p: Provider): Boolean = !ModelOptions.mayHaveNonTtsModels(p) && options(p).isEmpty()
+
     /** 一个服务商的全部模型,在用的排前面,其余保持原来的顺序。 */
-    fun sortedOptions(p: Provider): List<ModelOption> = options(p).sortedBy { if (rolesOf(p.id, it.id).isEmpty()) 1 else 0 }
+    fun sortedOptions(p: Provider): List<ModelOption> = ModelOptions.ofProvider(p, configs, includeTts = true)
+        .sortedBy { if (it.id in p.ttsModels || rolesOf(p.id, it.id).isNotEmpty()) 0 else 1 }
 
     /** 实际在用这个模型的用途(含「用主模型」跟过来的),按主模型、看图、轻量的顺序。 */
     fun rolesOf(providerId: String, model: String): List<ModelRole> =
@@ -299,13 +282,13 @@ data class ModelSetupUi(
     /** 实际在用这个服务商的用途。 */
     fun rolesOf(p: Provider): List<ModelRole> = ModelRole.entries.filter { configFor(it)?.providerId == p.id }
 
-    /**
-     * 不提供列表的服务商里,在用、却没试调用通过过的模型名(见 [Provider.verifiedModels]):这些是手填的,填错了任务就会失败。
-     * 有列表的服务商,模型是从列表里选的,不算。
-     */
-    fun unverified(p: Provider): List<String> =
+    /** 这家正在使用的对话模型，包括各用途的备援。 */
+    fun usedChatModels(p: Provider): List<String> =
         roles.referenced.mapNotNull { id -> configs.firstOrNull { it.id == id && it.providerId == p.id }?.model }
-            .distinct().filter(p::untested)
+            .distinct().filter { ModelOptions.canUseForChat(p, it) }
+
+    /** 在用、没有模型列表且未验证的手填模型。 */
+    fun unverified(p: Provider): List<String> = usedChatModels(p).filter(p::untested)
 
     /**
      * 这家是跳过测试直接存下的(见 [ModelSetupViewModel.saveWithoutTest]):既没列过模型、也没有一个模型试通过过。
@@ -330,9 +313,9 @@ data class ModelSetupUi(
 }
 
 /**
- * 配置模型的状态与动作。添加服务商:选预设 → 填 Key →「测试并保存」(列模型,再让会当主模型的那个回一句话,都成了才存下这家和列表,不成说原因、不存);
+ * 配置模型的状态与动作。添加服务商时「测试并保存」验证目录接口并保存服务商。
  * 改了服务商、地址或 Key,进行中的测试作废。用途:从所有已连接服务商记住的模型里选,选中即生效;
- * 看图还可以「用主模型」「不用」,轻量可以「用主模型」。连上第一家(还没有主模型)时自动选它的一个模型为主模型。
+ * 看图还可以「用主模型」「不用」,轻量可以「用主模型」。
  * 首次上手和设置 › 模型共用。
  */
 class ModelSetupViewModel(
@@ -490,117 +473,66 @@ class ModelSetupViewModel(
         _state.update { it.copy(form = change(it.form).copy(test = ListState.Idle)) }
     }
 
-    /**
-     * 测试并保存:列得出模型,再按 [ModelOptions.candidates] 的先后让模型调用一次工具(见 [probe]),成了就存下这家服务商、
-     * 拿通过的那个当主模型(还没有主模型时),表单清空收起。先试的没通过、是那个模型自己的问题(这个账号没开通或没权限、
-     * 没有这个模型、不会调用工具)时,接着试下一个,至多试 [PROBE_CANDIDATES] 个:Key 已经证明是对的,
-     * 通过了的当主模型并说一句先试的哪些没通过;都没通过也存下服务商、不定主模型,说明原因并请用户从列表里选
-     * ([ModelSetupUi.probeNote]、[ModelSetupUi.pickToProbe],选的时候先试调用)。
-     * 第一个就因为别的原因失败(Key、网络、地址、超时、服务端出错)说原因、不存。
-     *
-     * 没列出模型(列表接口不存在,或列出来是空的):可能这家真不提供列表,也可能地址、接口类型填错了,单看列表分不出来。
-     * 所以不直接存,要用户填一个模型名([AddForm.noList]),再测试时用它试调用:通了才存成不提供列表的服务商,
-     * 不通说原因、不存。
-     *
-     * 手填了模型名([AddForm.typedModel],随时可以点「手动填写模型名」填)就只试这一个:列表列得出、列不出、列表里有没有它都一样,
-     * 列表出了别的错(Key 不对、服务端出错、回的不是 JSON…)也不挡,试调用的结论说了算——Key、地址不对,试调用一样不通。
-     * 没手填时列表出了别的错照旧说原因,并展开模型名一栏:有的服务只是列表接口不好用,填一个模型名还能连上。
-     */
+    /** 验证服务商连接并保存目录。目录不可用时可通过 [saveWithoutTest] 先存下服务商。 */
     fun testAndSave() {
         val f = _state.value.form
         if (!f.canTest) return
         val key = headerKey(f.apiKey) ?: return rejectKey()
         testJob?.cancel()
-        _state.update { it.copy(form = it.form.copy(test = ListState.Running), probeNote = null, pickToProbe = null) }
+        _state.update { it.copy(form = it.form.copy(test = ListState.Running), probeNote = null) }
         testJob = scope.launch {
             val baseUrl = f.baseUrl.trim()
             val typed = f.typedModel
             val models = when (val r = listSafely { store.listModels(f.kind, baseUrl, key.ifEmpty { null }, f.sessionHeader) }) {
                 is ModelListResult.Ok -> r.models
                 is ModelListResult.Failed -> {
-                    if (r.reason != ListFailure.NotSupported && typed.isEmpty()) {
+                    if (r.reason != ListFailure.NotSupported) {
                         _state.update { it.copy(form = it.form.copy(test = ListState.Failed(listMessage(r)), manual = true)) }
                         return@launch
                     }
                     emptyList()
                 }
             }
-            if (models.isEmpty() && typed.isEmpty()) {
+            if (models.isEmpty()) {
                 _state.update { it.copy(form = it.form.copy(test = ListState.Idle, noList = true)) }
                 return@launch
             }
-            // 手填了模型名:只试这一个,列表(有的话)照样存下
-            if (typed.isNotEmpty()) {
-                val listed = models.firstOrNull { it.id == typed }
-                val base = (ProviderPresets.forBaseUrl(baseUrl) ?: ProviderPresets.custom).capabilities
-                val caps = listed?.let { ModelOptions.merge(listOf(it), base).firstOrNull()?.capabilities } ?: base
-                val outcome = probeModel(
-                    f.kind, baseUrl, key.ifEmpty { null }, f.sessionHeader, typed, listed?.endpoint, caps, f.exampleKind,
-                    listMissing = models.isEmpty() && f.isCustom,
-                )
-                if (outcome is ProbeOutcome.Failed) {
-                    _state.update { it.copy(form = it.form.copy(test = ListState.Failed(outcome.message))) }
-                    return@launch
-                }
-                val noTools = outcome is ProbeOutcome.NoToolCall
+            try {
                 withContext(io) {
-                    val p = store.connect(
-                        f.providerName, f.kind, baseUrl, key, models, f.sessionHeader, setOf(typed),
-                        typed = if (listed == null) setOf(typed) else emptySet(),
+                    store.connect(
+                        f.providerName, f.kind, baseUrl, key, models, f.sessionHeader,
+                        typed = setOfNotNull(typed.takeIf { it.isNotEmpty() && models.none { model -> model.id == it } }),
                     )
-                    if (!noTools && store.roles.value.main == null) use(ModelRole.Main, p, typed, ModelOptions.ofProvider(p, store.list()))
                 }
-                val note = if (noTools) tr(R.string.model_probe_no_tools, typed) else null
-                _state.update { snapshot(it.copy(form = AddForm.of(ProviderPresets.all.first()), formOpen = false, probeNote = note)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(form = it.form.copy(test = ListState.Failed(listFailureText(e)))) }
                 return@launch
             }
-            val probed = when (val r = probe(f, baseUrl, key.ifEmpty { null }, models)) {
-                is ListProbe.Blocked -> {
-                    _state.update { it.copy(form = it.form.copy(test = ListState.Failed(r.message))) }
-                    return@launch
-                }
-                is ListProbe.Done -> r
-            }
-            val noneUsable = probed.main == null && probed.rejected.isNotEmpty()
-            val saved = withContext(io) {
-                val p = store.connect(f.providerName, f.kind, baseUrl, key, models, f.sessionHeader, setOfNotNull(probed.main))
-                if (!noneUsable && store.roles.value.main == null) {
-                    val options = ModelOptions.ofProvider(p, store.list())
-                    (probed.main ?: ModelOptions.defaultMain(options, f.familyTokens) ?: options.firstOrNull()?.id)
-                        ?.let { m -> use(ModelRole.Main, p, m, options) }
-                }
-                p
-            }
-            _state.update {
-                snapshot(it.copy(
-                    form = AddForm.of(ProviderPresets.all.first()), formOpen = false,
-                    probeNote = probeNote(probed), pickToProbe = saved.id.takeIf { noneUsable },
-                ))
-            }
+            _state.update { snapshot(it.copy(form = AddForm.of(ProviderPresets.all.first()), formOpen = false)) }
         }
     }
 
     /**
      * 不测试,直接保存:只按填的接口类型、地址和 Key 存下这家服务商,不列模型、不试调用(见 [AddForm.canSaveUntested])。
-     * 存下的这家带着 [Provider.savedUntested]:服务商页会说清它还没测过,并留着「重新测试」;
-     * 没有定主模型时还设 [ModelSetupUi.pickToProbe],之后从列表里选主模型会先试调用一次(见 [ModelSetupUi.probeBeforePick])。
+     * 存下的这家带着 [Provider.savedUntested]，服务商页提供刷新目录的入口。
      *
      * 手填了模型名([AddForm.typedModel])时,只把它记为手填——列表里没有它、或这家列不出模型,刷新列表也不会丢。
-     * 没测过的模型不自动当主模型:没有主模型时用户去选,选的时候先试调用,通了才用。
      *
      * 列表参数给的是空列表(「列过但一个也没有」)而不是 null:这样「没列出模型」这件事和 [Provider.savedUntested]
-     * 一起把两种情形分清楚了——真的没有列表,还是这次没去列。旧的 [testAndSave] 一行都不动。
+     * 一起把两种情形分清楚了——真的没有列表,还是这次没去列。
      */
     fun saveWithoutTest() {
         val f = _state.value.form
         if (!f.canSaveUntested) return
         val key = headerKey(f.apiKey) ?: return rejectKey()
         testJob?.cancel()
-        _state.update { it.copy(form = it.form.copy(test = ListState.Running), probeNote = null, pickToProbe = null) }
+        _state.update { it.copy(form = it.form.copy(test = ListState.Running), probeNote = null) }
         testJob = scope.launch {
             val baseUrl = f.baseUrl.trim()
             val typed = f.typedModel
-            val saved = try {
+            try {
                 withContext(io) {
                     store.connect(
                         f.providerName, f.kind, baseUrl, key.ifEmpty { null }, emptyList(), f.sessionHeader, untested = true,
@@ -616,8 +548,6 @@ class ModelSetupViewModel(
                 snapshot(it.copy(
                     form = AddForm.of(ProviderPresets.all.first()), formOpen = false,
                     probeNote = tr(R.string.model_saved_untested, f.providerName),
-                    // 没有主模型时,在它里面选主模型会先试调用
-                    pickToProbe = saved.id.takeIf { store.roles.value.main == null },
                 ))
             }
         }
@@ -666,131 +596,27 @@ class ModelSetupViewModel(
 
     /**
      * 试调用的结论:通过、[model] 没调用工具、失败([message] 是给人看的原因)。
-     * 失败是那个模型自己的问题(这个账号用不了、没有这个模型、不支持工具)时 [modelReason] 是短的原因,换一个模型可能就行;
-     * [notAvailable] 为真是没开通或没权限;[serverSide] 为真是服务端出错(5xx),可能只是这一个模型的上游挂了,见 [probe]。
      */
     private sealed interface ProbeOutcome {
         data object Passed : ProbeOutcome
         data class NoToolCall(val model: String) : ProbeOutcome
-        data class Failed(
-            val message: String, val modelReason: String? = null,
-            val notAvailable: Boolean = false, val serverSide: Boolean = false,
-        ) : ProbeOutcome
-    }
-
-    /**
-     * 先试、没通过的一个模型:[reason] 是短的原因;[serverSide] 为真是服务端出错(5xx),见 [probe]。
-     * [skipped] 为真是压根没试(接口写明了它不走这个接口类型),文案里不能说「试了」。
-     */
-    private data class Rejected(
-        val model: String, val reason: String, val notAvailable: Boolean, val serverSide: Boolean = false,
-        val skipped: Boolean = false,
-    )
-
-    /** 有列表时试调用的结果:[Blocked] 是第一个就因为模型以外的原因失败,不存;[Done] 见 [probe]。 */
-    private sealed interface ListProbe {
-        data class Blocked(val message: String) : ListProbe
-        /** [main] 是通过了的模型;[rejected] 是在它之前试过、没通过的。都为空是没有可试的模型。 */
-        data class Done(val main: String?, val rejected: List<Rejected>) : ListProbe
-    }
-
-    /**
-     * 列出模型后按 [ModelOptions.candidates] 的先后(没有就第一个)让模型调用一次工具(见 [probeModel]),至多试
-     * [PROBE_CANDIDATES] 个:通过就停;没通过、是那个模型自己的问题就试下一个。第一个因为别的原因失败为 [ListProbe.Blocked];
-     * 之后的因为别的原因失败就不再试(Key 已证明是对的),和都没通过一样处理。列表里一个能用的也没有时算通过、不试。
-     *
-     * 服务端出错(5xx)不一定整家不可用:聚合服务商把很多上游的模型放在同一个列表里,其中一个上游挂了也会这样。
-     * 所以 5xx 先按这个模型没通过记下、接着试下一个:后面有通过的,就说明是那个模型的问题,照常保存;
-     * 试的全都是这样,才当成整家不可用,不存。只碰到过 5xx 时 Key 还没证明是对的,这之后再碰到别的原因失败也照旧不存。
-     */
-    private suspend fun probe(f: AddForm, baseUrl: String, key: String?, models: List<ListedModel>): ListProbe {
-        // 用 ChatGPT 登录不走这张表单(登录本身就核对过了);表单只给 Key 的接口类型,这里再挡一次
-        if (f.kind == ProviderConfig.Kind.ChatGpt || f.kind == ProviderConfig.Kind.Xai) {
-            return ListProbe.Done(null, emptyList())
-        }
-        val base = (ProviderPresets.forBaseUrl(baseUrl) ?: ProviderPresets.custom).capabilities
-        val options = ModelOptions.merge(models, base)
-        // 接口写明了模型能走哪几种协议时,只试这个接口类型能走的:用不匹配的协议调用必然失败(如聚合服务把只支持
-        // /messages 的模型排在前面,而当前接口是 OpenAI 兼容),三个都撞墙就是白白干等 PROBE_TIMEOUT_MS × 3 分钟。
-        // 列表给某个模型单独指定了接口的(见 [ListedModel.endpoint]),调用按它自己说的协议走、与这里选的接口类型
-        // 无关,不能筛掉;协议未知的(没写这个字段)也照旧去试。
-        val mismatched = mutableListOf<String>()
-        val usable = ModelOptions.candidates(options, f.familyTokens).filter { m ->
-            val listed = models.firstOrNull { it.id == m }
-            if (listed?.endpoint != null) return@filter true
-            val protocols = listed?.protocols ?: return@filter true
-            if (f.kind.protocol in protocols) true else { mismatched += m; false }
-        }
-        if (usable.isEmpty() && mismatched.isNotEmpty()) {
-            val reason = tr(R.string.model_reason_wrong_protocol)
-            return ListProbe.Done(null, mismatched.take(PROBE_CANDIDATES).map { Rejected(it, reason, notAvailable = false, skipped = true) })
-        }
-        val order = usable.ifEmpty { listOfNotNull(options.firstOrNull()?.id) }
-        val rejected = mutableListOf<Rejected>()
-        var firstServerError: String? = null
-        for ((i, model) in order.take(PROBE_CANDIDATES).withIndex()) {
-            val caps = options.first { it.id == model }.capabilities
-            val endpoint = models.firstOrNull { it.id == model }?.endpoint
-            when (val o = probeModel(f.kind, baseUrl, key, f.sessionHeader, model, endpoint, caps, f.exampleKind, listMissing = false)) {
-                ProbeOutcome.Passed -> return ListProbe.Done(model, rejected)
-                is ProbeOutcome.NoToolCall -> rejected += Rejected(model, tr(R.string.model_reason_no_tools), notAvailable = false)
-                is ProbeOutcome.Failed -> when {
-                    o.modelReason != null -> {
-                        rejected += Rejected(model, o.modelReason, o.notAvailable, o.serverSide)
-                        if (o.serverSide && firstServerError == null) firstServerError = o.message
-                    }
-                    // 前面只有 5xx 时 Key 还没证明是对的:再碰到 Key、网络、地址、超时这类,照旧不存
-                    firstServerError != null || i == 0 -> return ListProbe.Blocked(o.message)
-                    else -> {
-                        rejected += Rejected(model, o.message, notAvailable = false)
-                        break
-                    }
-                }
-            }
-        }
-        // 试的全都是服务端出错:多半整家不可用,不存
-        if (rejected.isNotEmpty() && rejected.all { it.serverSide }) {
-            return ListProbe.Blocked(firstServerError ?: rejected.first().reason)
-        }
-        return ListProbe.Done(null, rejected)
-    }
-
-    /**
-     * 存下服务商后给人看的一句:先试的没通过、后面的通过了,说哪些没通过、主模型用了哪个;
-     * 都没通过,说第一个为什么没通过、试过哪些,请用户从列表里选。都顺利为 null。
-     *
-     * 都没通过时,末尾那句「怎么办」要跟着原因走:一个都没试、原因全是这个接口类型到不了它们(见 [Rejected.skipped]),
-     * 该换的是接口类型或换一个这个接口类型能用的模型,不能让人去「开通」——那不是这里的问题。其余照旧请他选一个开通了的。
-     */
-    private fun probeNote(r: ListProbe.Done): String? {
-        if (r.rejected.isEmpty()) return null
-        val names = r.rejected.joinToString(tr(R.string.list_sep)) { it.model }
-        val first = r.rejected.first()
-        if (r.main != null) return tr(R.string.model_probe_fallback, names, first.reason, r.main)
-        val wrongProtocol = r.rejected.all { it.skipped }
-        val head = if (wrongProtocol) {
-            tr(R.string.model_probe_none_usable_protocol, first.model, first.reason)
-        } else {
-            tr(R.string.model_probe_none_usable, first.model, first.reason)
-        }
-        // 一个都没试(接口写明了都不走这个接口类型):原因已经在 head 里说清,不能再写「试了」
-        if (r.rejected.size == 1 || wrongProtocol) return head
-        val tried = if (r.rejected.all { it.notAvailable }) tr(R.string.model_probe_tried_unavailable, names) else tr(R.string.model_probe_tried, names)
-        return "$head\n$tried"
+        data class Failed(val message: String) : ProbeOutcome
     }
 
     /**
      * 让 [model] 调用一次工具,和真实任务走同一条建模型的路(请求头、会话号都一样):Key 不对、少了服务商要的请求头、
      * 模型名不对、模型不会调用工具,这里就露出来,不等到第一个任务。超过 [PROBE_TIMEOUT_MS] 没回算失败,服务端的报错原样带上;
-     * 找不到模型时说清是哪个、模型名大概长什么样([exampleKind] 那一类的例子)。[listMissing] 为真时列表也没列出来,
-     * 那多半是地址或接口类型填错了,一并说。
+     * 找不到模型时说明是哪个，以及 [exampleKind] 这一类接口的模型名示例。
      */
     private suspend fun probeModel(
         kind: ProviderConfig.Kind, baseUrl: String, key: String?, sessionHeader: String?,
-        model: String, endpoint: ModelEndpoint?, caps: Capabilities, exampleKind: ProviderConfig.Kind, listMissing: Boolean,
+        model: String, endpoint: ModelEndpoint?, caps: Capabilities, exampleKind: ProviderConfig.Kind,
+        providerId: String = "",
     ): ProbeOutcome {
         val result = try {
-            withContext(io) { withTimeout(PROBE_TIMEOUT_MS) { store.probe(kind, baseUrl, key, sessionHeader, model, endpoint, caps) } }
+            withContext(io) {
+                withTimeout(PROBE_TIMEOUT_MS) { store.probe(kind, baseUrl, key, sessionHeader, model, endpoint, caps, providerId) }
+            }
         } catch (e: TimeoutCancellationException) {
             return ProbeOutcome.Failed(tr(R.string.model_probe_timeout, model, (PROBE_TIMEOUT_MS / 1000).toInt()))
         }
@@ -800,21 +626,11 @@ class ModelSetupViewModel(
             is ProbeResult.Failed -> when (val e = result.error) {
                 is ModelError.ModelNotAvailable -> {
                     val detail = e.detail.ifEmpty { e.message.orEmpty() }
-                    ProbeOutcome.Failed(
-                        tr(R.string.model_probe_not_available, model, detail),
-                        tr(R.string.model_reason_not_available, detail), notAvailable = true,
-                    )
+                    ProbeOutcome.Failed(tr(R.string.model_probe_not_available, model, detail))
                 }
-                is ModelError.ToolsUnsupported -> ProbeOutcome.Failed(tr(R.string.model_probe_no_tools_pick, model), tr(R.string.model_reason_no_tools))
+                is ModelError.ToolsUnsupported -> ProbeOutcome.Failed(tr(R.string.model_probe_no_tools_pick, model))
                 is ModelError.ModelNotFound -> ProbeOutcome.Failed(
-                    if (listMissing) tr(R.string.model_probe_not_found_no_list, model, ModelSetupCopy.modelExample(exampleKind))
-                    else tr(R.string.model_probe_not_found, model, ModelSetupCopy.modelExample(exampleKind)),
-                    tr(R.string.model_reason_not_found),
-                )
-                // 5xx:可能只是这一个模型的上游挂了,先按它没通过算,由 [probe] 决定还试不试下一个
-                is ModelError.Server -> ProbeOutcome.Failed(
-                    tr(R.string.model_probe_failed, model, e.message.orEmpty()),
-                    tr(R.string.model_reason_server, "HTTP ${e.status}"), serverSide = true,
+                    tr(R.string.model_probe_not_found, model, ModelSetupCopy.modelExample(exampleKind)),
                 )
                 // 代理那一段的问题:说是代理,不说成模型或服务商不行
                 is ModelError.Proxy -> ProbeOutcome.Failed(tr(R.string.model_probe_failed, model, proxyReason(e)))
@@ -826,11 +642,17 @@ class ModelSetupViewModel(
 
     /** 已连上的服务商里试调用 [model]:用存着的 Key、请求头,能力按已有的配置或预设。 */
     private suspend fun probeSaved(p: Provider, model: String): ProbeOutcome {
-        val options = ModelOptions.ofProvider(p, store.list())
-        val caps = options.firstOrNull { it.id == model }?.capabilities ?: ModelOptions.baseOf(p)
-        val endpoint = p.models?.firstOrNull { it.id == model }?.endpoint
-        val example = ProviderPresets.forHost(p.baseUrl)?.kind ?: p.kind
-        return probeModel(p.kind, p.baseUrl, store.providerKey(p.id), p.sessionHeader, model, endpoint, caps, example, listMissing = false)
+        val fresh = store.provider(p.id)
+            ?: return ProbeOutcome.Failed(tr(R.string.model_probe_not_found, model, ModelSetupCopy.modelExample(p.kind)))
+        if (!ModelOptions.canUseForChat(fresh, model)) return ProbeOutcome.Failed(tr(R.string.model_tts_only_not_supported))
+        val options = ModelOptions.ofProvider(fresh, store.list())
+        val caps = options.firstOrNull { it.id == model }?.capabilities ?: ModelOptions.baseOf(fresh)
+        val listed = fresh.models?.firstOrNull { it.id == model }
+        val example = ProviderPresets.forHost(fresh.baseUrl)?.kind ?: fresh.kind
+        return probeModel(
+            fresh.kind, fresh.baseUrl, store.providerKey(p.id), fresh.sessionHeader, model, listed?.endpoint, caps, example,
+            providerId = fresh.id,
+        )
     }
 
     // ---------- 用 ChatGPT 登录 ----------
@@ -1025,83 +847,79 @@ class ModelSetupViewModel(
         return saved
     }
 
-    /** 把 [providerId] 下的 [model] 用作 [role](选择页和「用作」面板都走这里):没有配置的当场建一条。 */
-    fun pick(role: ModelRole, providerId: String, model: String) {
-        val m = model.trim()
-        if (m.isEmpty()) return
-        scope.launch {
-            withContext(io) {
-                val p = store.provider(providerId) ?: return@withContext
-                use(role, p, m, ModelOptions.ofProvider(p, store.list()))
-            }
-            // 选好了主模型,试调用的说明就过去了
-            _state.update { snapshot(if (role == ModelRole.Main) it.copy(probeNote = null, pickToProbe = null) else it) }
+    fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
+        val saved = store.setTtsModel(providerId, model, enabled)
+        sync()
+        return saved
+    }
+
+    /** 在服务商详情中明确改选用途，可撤销同一模型的 TTS 标记。 */
+    fun useFromProvider(role: ModelRole, providerId: String, model: String): Boolean {
+        val provider = store.provider(providerId) ?: return false
+        val unmarked = provider.copy(ttsModels = provider.ttsModels - model)
+        val caps = ModelOptions.ofProvider(unmarked, store.list()).firstOrNull { it.id == model }?.capabilities
+            ?: ModelOptions.baseOf(provider)
+        val saved = store.use(role, providerId, model, caps, reassignTts = true)
+        sync()
+        return saved
+    }
+
+    /** 保存所选对话模型。 */
+    fun pick(role: ModelRole, providerId: String, model: String, onPicked: () -> Unit = {}) {
+        saveModelSelection(providerId, model, clearNote = role == ModelRole.Main, onPicked = onPicked) { provider, name ->
+            if (use(role, provider, name, ModelOptions.ofProvider(provider, store.list()))) null
+            else tr(R.string.model_context_save_failed)
         }
     }
 
-    /** 把 [providerId] 下的 [model] 设为指定角色的第 [slot] 位备援。 */
-    fun pickFallback(role: ModelRole, slot: Int, providerId: String, model: String) {
-        val m = model.trim()
-        if (m.isEmpty()) return
-        scope.launch {
-            var ok = false
-            withContext(io) {
-                val p = store.provider(providerId) ?: return@withContext
-                val caps = ModelOptions.ofProvider(p, store.list()).firstOrNull { it.id == m }?.capabilities ?: ModelOptions.baseOf(p)
-                val targetCaps = if (role == ModelRole.Vision) caps.copy(vision = true) else caps.copy(toolCalls = true)
-                ok = store.ensureConfigId(p.id, m, targetCaps)?.let { store.setFallback(role, slot, it) } == true
+    /** 保存指定角色的备援模型。 */
+    fun pickFallback(role: ModelRole, slot: Int, providerId: String, model: String, onPicked: () -> Unit = {}) {
+        saveModelSelection(providerId, model, clearNote = true, onPicked = onPicked) { provider, name ->
+            if (store.configFor(role)?.let { it.providerId == provider.id && it.model == name } == true) {
+                return@saveModelSelection tr(if (role == ModelRole.Main) R.string.main_fallback_is_main else R.string.main_fallback_failed)
             }
-            _state.update { snapshot(if (ok) it.copy(probeNote = null, pickToProbe = null) else it.copy(probeNote = tr(R.string.main_fallback_failed))) }
+            val caps = ModelOptions.ofProvider(provider, store.list()).firstOrNull { it.id == name }?.capabilities
+                ?: ModelOptions.baseOf(provider)
+            val targetCaps = if (role == ModelRole.Vision) caps.copy(vision = true) else caps.copy(toolCalls = true)
+            val configId = store.ensureConfigId(provider.id, name, targetCaps)
+            if (configId != null && store.setFallback(role, slot, configId)) null
+            else tr(R.string.main_fallback_failed)
         }
     }
 
-    /** 兼容旧方法调用 */
-    fun pickFallback(slot: Int, providerId: String, model: String) =
-        pickFallback(ModelRole.Main, slot, providerId, model)
-
-    /** 备援手填(或在没试通过的那家选):先试调用,通了才设上。 */
-    fun pickFallbackManual(role: ModelRole, slot: Int, providerId: String, model: String, onPicked: () -> Unit = {}) {
-        val m = model.trim()
-        if (m.isEmpty() || _state.value.manualPick[providerId] == ListState.Running) return
-        val p = store.provider(providerId) ?: return
-        if (store.isMainModel(providerId, m) && role == ModelRole.Main) {
-            _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Failed(tr(R.string.main_fallback_is_main)))) }
-            return
-        }
+    private fun saveModelSelection(
+        providerId: String, model: String, clearNote: Boolean, onPicked: () -> Unit,
+        save: (Provider, String) -> String?,
+    ) {
+        val name = model.trim()
+        if (name.isEmpty() || _state.value.manualPick[providerId] == ListState.Running) return
         _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Running)) }
         scope.launch {
-            val outcome = probeSaved(p, m)
-            val problem = when {
-                outcome is ProbeOutcome.Failed -> outcome.message
-                outcome is ProbeOutcome.NoToolCall && role != ModelRole.Vision -> tr(R.string.model_probe_no_tools_pick, m)
-                else -> null
-            }
-            if (problem != null) {
-                _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Failed(problem))) }
-                return@launch
-            }
-            var ok = false
-            withContext(io) {
-                store.markVerified(p.id, m)
-                if (p.models.orEmpty().none { it.id == m }) store.markTyped(p.id, m)
-                store.provider(p.id)?.let { fresh ->
-                    val caps = ModelOptions.ofProvider(fresh, store.list()).firstOrNull { it.id == m }?.capabilities ?: ModelOptions.baseOf(fresh)
-                    val targetCaps = if (role == ModelRole.Vision) caps.copy(vision = true) else caps.copy(toolCalls = true)
-                    ok = store.ensureConfigId(fresh.id, m, targetCaps)?.let { store.setFallback(role, slot, it) } == true
+            val problem = try {
+                withContext(io) {
+                    val provider = store.provider(providerId) ?: return@withContext tr(R.string.model_context_save_failed)
+                    if (!ModelOptions.canUseForChat(provider, name)) return@withContext tr(R.string.model_tts_only_not_supported)
+                    val failure = save(provider, name)
+                    if (failure == null && provider.models.orEmpty().none { it.id == name }) {
+                        store.markTyped(providerId, name)
+                    }
+                    failure
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                tr(R.string.model_context_save_failed)
             }
-            if (!ok) {
-                _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Failed(tr(R.string.main_fallback_failed)))) }
-                return@launch
+            _state.update {
+                snapshot(it.copy(
+                    manualPick = if (problem == null) it.manualPick - providerId
+                        else it.manualPick + (providerId to ListState.Failed(problem)),
+                    probeNote = if (problem == null && clearNote) null else it.probeNote,
+                ))
             }
-            _state.update { snapshot(it.copy(manualPick = it.manualPick - providerId, probeNote = null, pickToProbe = null)) }
-            onPicked()
+            if (problem == null) onPicked()
         }
     }
-
-    /** 兼容旧方法调用 */
-    fun pickFallbackManual(slot: Int, providerId: String, model: String, onPicked: () -> Unit = {}) =
-        pickFallbackManual(ModelRole.Main, slot, providerId, model, onPicked)
 
     /** 撤掉指定角色的第 [slot] 位备援。 */
     fun clearFallback(role: ModelRole, slot: Int) {
@@ -1119,41 +937,6 @@ class ModelSetupViewModel(
         scope.launch {
             withContext(io) { store.choose(role, choice) }
             sync()
-        }
-    }
-
-    /**
-     * 选择页里给某家手填了模型名(每家都能填:不提供列表的,列表里没有要的),或在刚存下、没有一个模型试通过的那家选主模型
-     * (见 [ModelSetupUi.probeBeforePick]):先试调用一次,通了才用作 [role](记为核实过;列表里没有的记为手填),
-     * 然后调 [onPicked];不通说原因、不选。主模型还要会调用工具。
-     */
-    fun pickManual(role: ModelRole, providerId: String, model: String, onPicked: () -> Unit = {}) {
-        val m = model.trim()
-        if (m.isEmpty() || _state.value.manualPick[providerId] == ListState.Running) return
-        val p = store.provider(providerId) ?: return
-        _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Running)) }
-        scope.launch {
-            val outcome = probeSaved(p, m)
-            val problem = when {
-                outcome is ProbeOutcome.Failed -> outcome.message
-                outcome is ProbeOutcome.NoToolCall && role == ModelRole.Main -> tr(R.string.model_probe_no_tools_pick, m)
-                else -> null
-            }
-            if (problem != null) {
-                _state.update { it.copy(manualPick = it.manualPick + (providerId to ListState.Failed(problem))) }
-                return@launch
-            }
-            withContext(io) {
-                store.markVerified(p.id, m)
-                // 列表里没有的记为手填:刷新列表不丢,选的时候标出来
-                if (p.models.orEmpty().none { it.id == m }) store.markTyped(p.id, m)
-                store.provider(p.id)?.let { fresh -> use(role, fresh, m, ModelOptions.ofProvider(fresh, store.list())) }
-            }
-            _state.update {
-                snapshot(if (role == ModelRole.Main) it.copy(manualPick = it.manualPick - providerId, probeNote = null, pickToProbe = null)
-                    else it.copy(manualPick = it.manualPick - providerId))
-            }
-            onPicked()
         }
     }
 
@@ -1176,6 +959,10 @@ class ModelSetupViewModel(
         val settings = speech ?: return
         if (m.isEmpty() || _state.value.speechTesting != null) return
         val p = store.provider(providerId) ?: return
+        if (ModelOptions.isTtsOnly(p, m)) {
+            _speechProbe.value = _speechProbe.value + (providerId to tr(R.string.model_tts_only_not_supported))
+            return
+        }
         _speechProbe.value = _speechProbe.value - providerId
         _state.update { it.copy(speechTesting = providerId) }
         scope.launch {
@@ -1183,9 +970,16 @@ class ModelSetupViewModel(
                 val method = withContext(io) {
                     withTimeout(PROBE_TIMEOUT_MS) { transcriber(p).detect(p, store.providerKey(p.id), m) }
                 }
-                withContext(io) { store.markVerified(p.id, m) }
-                settings.set(SpeechChoice.Provider(p.id, m, method))
-                null
+                val currentProvider = store.provider(providerId)
+                when {
+                    currentProvider == null -> tr(R.string.voice_unavailable_provider_gone)
+                    ModelOptions.isTtsOnly(currentProvider, m) -> tr(R.string.model_tts_only_not_supported)
+                    else -> {
+                        withContext(io) { store.markVerified(p.id, m) }
+                        settings.set(SpeechChoice.Provider(p.id, m, method))
+                        null
+                    }
+                }
             } catch (e: TimeoutCancellationException) {
                 tr(R.string.speech_pick_timeout, m, (PROBE_TIMEOUT_MS / 1000).toInt())
             } catch (e: CancellationException) {
@@ -1216,34 +1010,33 @@ class ModelSetupViewModel(
     /** 选择页打开时,上次试转的结果作废。 */
     fun clearSpeechProbe() { _speechProbe.value = emptyMap() }
 
-    /** 选择页打开时,上次手填试调用的结果作废。 */
+    /** 选择页打开时清掉上次保存的结果。 */
     fun clearManualPick() = _state.update { it.copy(manualPick = emptyMap()) }
 
-    /**
-     * 「重新测试」:这家在用、没核实过的模型(见 [ModelSetupUi.unverified])逐个试调用,通了记为核实过;
-     * 有一个不通就停下说原因。
-     */
-    fun retest(providerId: String) {
-        val p = store.provider(providerId) ?: return
-        val models = _state.value.unverified(p)
-        if (models.isEmpty() || _state.value.retest[providerId] == ListState.Running) return
-        _state.update { it.copy(retest = it.retest + (providerId to ListState.Running)) }
+    /** 只测试用户在服务商页确认的这一个模型。 */
+    fun retestModel(providerId: String, model: String) {
+        val provider = store.provider(providerId) ?: return
+        val key = providerId to model
+        if (model !in _state.value.usedChatModels(provider) || _state.value.retest[key] == ListState.Running) return
+        _state.update { it.copy(retest = it.retest + (key to ListState.Running)) }
         scope.launch {
-            for (m in models) {
-                val outcome = probeSaved(p, m)
-                if (outcome is ProbeOutcome.Failed) {
-                    _state.update { snapshot(it.copy(retest = it.retest + (providerId to ListState.Failed(outcome.message)))) }
-                    return@launch
-                }
-                withContext(io) { store.markVerified(p.id, m) }
+            val outcome = probeSaved(provider, model)
+            val problem = when {
+                outcome is ProbeOutcome.Failed -> outcome.message
+                outcome is ProbeOutcome.NoToolCall && store.isMainModel(providerId, model) ->
+                    tr(R.string.model_probe_no_tools_pick, model)
+                else -> null
             }
-            _state.update { snapshot(it.copy(retest = it.retest - providerId)) }
+            if (problem == null) withContext(io) { store.markVerified(providerId, model) }
+            _state.update {
+                snapshot(it.copy(retest = if (problem == null) it.retest - key else it.retest + (key to ListState.Failed(problem))))
+            }
         }
     }
 
-    private fun use(role: ModelRole, p: Provider, model: String, options: List<ModelOption>) {
+    private fun use(role: ModelRole, p: Provider, model: String, options: List<ModelOption>): Boolean {
         val caps = options.firstOrNull { it.id == model }?.capabilities ?: ModelOptions.baseOf(p)
-        store.use(role, p.id, model, caps)
+        return store.use(role, p.id, model, caps)
     }
 
     // ---------- 一个服务商 ----------
@@ -1350,11 +1143,8 @@ class ModelSetupViewModel(
     }
 
     companion object {
-        /** 「测试并保存」里试调用最多等多久。 */
+        /** 用户指定模型的试调用最多等多久。 */
         const val PROBE_TIMEOUT_MS = 20_000L
-
-        /** 「测试并保存」有列表时至多试几个模型:先试的那个,加没通过时接着试的 2 个。 */
-        const val PROBE_CANDIDATES = 3
 
         /** 自定义服务商的名字最多几个字(服务商列表一行放得下)。 */
         const val MAX_NAME = 32

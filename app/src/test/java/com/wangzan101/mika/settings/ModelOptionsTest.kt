@@ -227,4 +227,27 @@ class ModelOptionsTest {
         assertTrue("已有配置的用配置里的能力", options.first { it.id == "b" }.capabilities.vision)
         assertEquals(emptyList<String>(), ModelOptions.ofProvider(p.copy(models = null), emptyList()).map { it.id })
     }
+
+    @Test fun onlyExplicitRoleMarksFilterThePicker() {
+        val ids = listOf("fishaudio/drama-3-int4", "renamed-model", "vendor/chat-tts", "speech-endpoint")
+        val catalog = ids.map { ListedModel(it, chat = false, unsupportedApis = listOf("/v1/audio/speech")) }
+        val p = Provider("p", "Local", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1", models = catalog)
+        assertEquals(ids.toSet(), ModelOptions.ofProvider(p, emptyList()).map { it.id }.toSet())
+        for (id in ids) {
+            val marked = p.copy(ttsModels = setOf(id))
+            assertEquals(ids.toSet() - id, ModelOptions.ofProvider(marked, emptyList()).map { it.id }.toSet())
+            assertEquals(ids.toSet(), ModelOptions.ofProvider(marked, emptyList(), includeTts = true).map { it.id }.toSet())
+            assertTrue(ModelOptions.canUseForChat(p, id))
+            assertFalse(ModelOptions.canUseForChat(marked, id))
+        }
+    }
+
+    @Test fun providerWithOnlyManuallyMarkedModelsIsHiddenFromRolePickers() {
+        val p = Provider("p", "Local", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1",
+            models = listOf(ListedModel("only-id")), ttsModels = setOf("only-id"))
+        assertFalse(ModelOptions.mayHaveNonTtsModels(p))
+        assertFalse(ModelOptions.mayHaveNonTtsModels(p.copy(models = emptyList())))
+        assertTrue(ModelOptions.mayHaveNonTtsModels(p.copy(typedModels = setOf("extra-model"))))
+        assertTrue(ModelOptions.mayHaveNonTtsModels(p.copy(ttsModels = emptySet())))
+    }
 }

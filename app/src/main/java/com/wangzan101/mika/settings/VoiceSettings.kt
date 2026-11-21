@@ -70,6 +70,22 @@ class VoiceSettings(private val prefs: SharedPreferences) {
     private val _state = MutableStateFlow(read())
     val state: StateFlow<VoiceSettingsState> = _state.asStateFlow()
 
+    /** 旧版在声音页直接填写模型。首次升级时保留这个选择及其音色和协议。 */
+    internal fun reconcileTtsChoice(store: ProviderStore) {
+        val choice = state.value.choice
+        if (!prefs.getBoolean(KEY_TTS_ROLE_MIGRATED, false)) {
+            if (choice != null && store.provider(choice.providerId) != null) {
+                val model = choice.model.trim()
+                if (!store.setTtsModel(choice.providerId, model, true)) return
+                if (model != choice.model) setChoice(choice.copy(model = model))
+            }
+            prefs.edit().putBoolean(KEY_TTS_ROLE_MIGRATED, true).apply()
+        }
+        if (choice != null && store.provider(choice.providerId)?.ttsModels?.contains(choice.model.trim()) != true) {
+            setChoice(null)
+        }
+    }
+
     fun setEnabled(on: Boolean) = update { copy(enabled = on) }
 
     fun setChoice(choice: VoiceChoice?) = update {
@@ -162,6 +178,7 @@ class VoiceSettings(private val prefs: SharedPreferences) {
 
     companion object {
         private const val KEY = "voice_settings"
+        private const val KEY_TTS_ROLE_MIGRATED = "voice_tts_role_migrated"
 
         fun get(context: Context): VoiceSettings =
             (context.applicationContext as? Owner)?.voiceSettings

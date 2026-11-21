@@ -79,6 +79,8 @@ import com.wangzan101.mika.settings.ProviderKeySites
 import com.wangzan101.mika.settings.ProviderPresets
 import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.settings.RoleChoice
+import com.wangzan101.mika.settings.VoiceChoice
+import com.wangzan101.mika.settings.VoiceSettings
 import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.ButtonSize
 import com.wangzan101.mika.ui.components.CapabilityTag
@@ -134,6 +136,8 @@ fun ModelSetupScreen(
         )
     }
     val ui by vm.state.collectAsState()
+    val voiceSettings = if (onOpenVoice != null) (context.applicationContext as? VoiceSettings.Owner)?.voiceSettings else null
+    val voiceChoice = voiceSettings?.state?.collectAsState()?.value?.choice
     var picking by rememberSaveable { mutableStateOf<ModelRole?>(null) }
     var pickingFallbackRole by rememberSaveable { mutableStateOf<ModelRole?>(null) }
     var pickingFallbackSlot by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -148,12 +152,11 @@ fun ModelSetupScreen(
     LaunchedEffect(ui.signedInProvider) {
         val id = ui.signedInProvider ?: return@LaunchedEffect
         signInSheet = null
-        picking = null
-        pickingFallbackRole = null
-        pickingFallbackSlot = null
-        openProvider = id
-        allModels = false
-        showProviders = false
+        if (picking == null && pickingFallbackSlot == null) {
+            openProvider = id
+            allModels = false
+            showProviders = false
+        }
         vm.signedInShown()
     }
     // ChatGPT 登录成功照旧留在这一页(第一次会说明在用套餐额度),面板收起
@@ -166,10 +169,15 @@ fun ModelSetupScreen(
     val actions = ModelSetupActions(
         selectPreset = vm::selectPreset, setKind = vm::setKind, setBaseUrl = vm::setBaseUrl, setAccountId = vm::setAccountId, setApiKey = vm::setApiKey,
         setModel = vm::setModel, setManual = vm::setManual, setName = vm::setName,
-        testAndSave = vm::testAndSave, saveUntested = vm::saveWithoutTest,
+        testAndSave = vm::testAndSave,
+        saveUntested = vm::saveWithoutTest,
         openForm = vm::openForm, closeForm = vm::closeForm,
         // 从服务商页面进详情时留着 showProviders:返回落回服务商页面,不是模型页
-        openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it },
+        openProvider = {
+            if (ui.formOpen) vm.closeForm()
+            openProvider = it
+            allModels = false
+        }, pickRole = { picking = it },
         pickFallback = { pickingFallbackRole = ModelRole.Main; pickingFallbackSlot = it },
         pickRoleFallback = { r, s -> pickingFallbackRole = r; pickingFallbackSlot = s },
         clearFallback = vm::clearFallback,
@@ -179,7 +187,7 @@ fun ModelSetupScreen(
         setReasoningEffort = vm::setReasoningEffort, setModelContext = vm::setModelContext,
     )
     // 内部子页:标识稳定(换数据不重演动画)、带着层级(决定滑动方向)
-    val subPage: ModelSubPage = when {
+    val origin: ModelSubPage = when {
         openDecision -> ModelSubPage.Decision
         provider != null && allModels -> ModelSubPage.AllModels(provider.id, showProviders)
         provider != null -> ModelSubPage.Detail(provider.id, showProviders)
@@ -188,11 +196,18 @@ fun ModelSetupScreen(
         role != null -> ModelSubPage.RolePick(role)
         else -> ModelSubPage.Main
     }
+    val subPage = if (ui.formOpen) ModelSubPage.AddProvider(origin.depth + 1) else origin
     // 换页动画期间旧页还在渲染:服务商刚删掉时详情页也能从缓存里拿到数据画完退出
     var heldProviders by remember { mutableStateOf(ui.providers) }
     if (ui.providers.isNotEmpty()) heldProviders = ui.providers
     NavSlide(subPage, depth = { it.depth }) { page ->
     when (page) {
+        is ModelSubPage.AddProvider -> {
+            BackHandler(onBack = vm::closeForm)
+            Page(ModelsCopy.ADD_PROVIDER, onBack = vm::closeForm) {
+                AddProviderForm(ui, actions, standalone = true)
+            }
+        }
         is ModelSubPage.Decision -> JevSettingsScreen(remember { DecisionSettings.get(context) }, onBack = { openDecision = false })
         is ModelSubPage.Detail, is ModelSubPage.AllModels -> {
             val pid = if (page is ModelSubPage.Detail) page.id else (page as ModelSubPage.AllModels).id
@@ -209,11 +224,12 @@ fun ModelSetupScreen(
                     addKey = { vm.addProviderKey(p.id, it) },
                     removeKey = { vm.removeProviderKey(p.id, it) },
                     remove = { vm.removeProvider(p.id); openProvider = null; allModels = false },
-                    use = { r, model -> vm.pick(r, p.id, model) },
+                    use = { r, model -> vm.useFromProvider(r, p.id, model) },
                     setVision = { model, sees -> vm.setModelVision(p.id, model, sees) },
                     setServiceTier = { model, tier -> vm.setModelServiceTier(p.id, model, tier) },
+                    setTts = { model, enabled -> vm.setTtsModel(p.id, model, enabled) },
                     showAll = { allModels = true },
-                    retest = { vm.retest(p.id) },
+                    retestModel = { model -> vm.retestModel(p.id, model) },
                     // ChatGPT 照旧直接去浏览器登录;xAI、OpenRouter 先打开说明面板
                     signIn = { if (accountKind != null) signInSheet = accountKind else vm.signInWithChatGpt() },
                     signOut = { if (accountKind != null) vm.signOutAccount(p.id) else vm.signOutChatGpt(p.id) },
@@ -253,11 +269,12 @@ fun ModelSetupScreen(
                 ui, role,
                 RolePickerActions(
                     pick = { pid, model ->
-                        if (ui.probeBeforePick(role, pid)) vm.pickFallbackManual(role, slot, pid, model) { pickingFallbackSlot = null; pickingFallbackRole = null }
-                        else { vm.pickFallback(role, slot, pid, model); pickingFallbackSlot = null; pickingFallbackRole = null }
+                        vm.pickFallback(role, slot, pid, model) {
+                            pickingFallbackSlot = null
+                            pickingFallbackRole = null
+                        }
                     },
-                    pickManual = { pid, model -> vm.pickFallbackManual(role, slot, pid, model) { pickingFallbackSlot = null; pickingFallbackRole = null } },
-                    addProvider = { vm.openForm(); pickingFallbackSlot = null; pickingFallbackRole = null },
+                    addProvider = vm::openForm,
                 ),
                 onBack = { pickingFallbackSlot = null; pickingFallbackRole = null },
                 titleOverride = ModelsCopy.fallbackLabel(role, slot),
@@ -281,14 +298,9 @@ fun ModelSetupScreen(
             RolePickerContent(
                 ui, role,
                 RolePickerActions(
-                    pick = { pid, model ->
-                        // 刚存下、没有一个模型试通过的那家:先试调用,通了才选上、返回
-                        if (ui.probeBeforePick(role, pid)) vm.pickManual(role, pid, model) { picking = null }
-                        else { vm.pick(role, pid, model); picking = null }
-                    },
-                    pickManual = { pid, model -> vm.pickManual(role, pid, model) { picking = null } },
+                    pick = { pid, model -> vm.pick(role, pid, model) { picking = null } },
                     choose = { vm.choose(role, it); picking = null },
-                    addProvider = { vm.openForm(); picking = null },
+                    addProvider = vm::openForm,
                 ),
                 onBack = { picking = null },
             )
@@ -296,7 +308,7 @@ fun ModelSetupScreen(
         is ModelSubPage.Main -> {
             if (ui.chatGptWelcome) ChatGptWelcome(vm::dismissChatGptWelcome)
             BackHandler(onBack = onBack)
-            ModelSetupContent(ui, onboarding, actions, onBack)
+            ModelSetupContent(ui, onboarding, actions, voiceChoice = voiceChoice, onBack = onBack)
         }
     }
     }
@@ -309,8 +321,6 @@ fun ModelSetupScreen(
                 cancel = { k -> if (k.account != null) vm.cancelAccountSignIn() else vm.cancelChatGptSignIn() },
                 useApiKey = { k ->
                     signInSheet = null
-                    openProvider = null
-                    picking = null
                     vm.openForm()
                     k.keyPreset?.let(vm::selectPreset)
                 },
@@ -332,6 +342,7 @@ private sealed class ModelSubPage(val depth: Int) {
     data object Main : ModelSubPage(0)
     data object Decision : ModelSubPage(1)
     data object Providers : ModelSubPage(1)
+    data class AddProvider(val level: Int) : ModelSubPage(level)
     data class Detail(val id: String, val fromProviders: Boolean) : ModelSubPage(if (fromProviders) 2 else 1)
     data class AllModels(val id: String, val fromProviders: Boolean) : ModelSubPage(if (fromProviders) 3 else 2)
     data class FallbackPick(val role: ModelRole, val slot: Int) : ModelSubPage(1)
@@ -383,12 +394,15 @@ class ModelSetupActions(
  * 所以设置里进来只有返回;上手时底部留「下一步」,键盘弹出时藏起来,把地方让给表单。
  */
 @Composable
-fun ModelSetupContent(ui: ModelSetupUi, onboarding: Boolean, actions: ModelSetupActions, onBack: () -> Unit) {
+fun ModelSetupContent(
+    ui: ModelSetupUi, onboarding: Boolean, actions: ModelSetupActions,
+    voiceChoice: VoiceChoice? = null, onBack: () -> Unit,
+) {
     val c = MikaTheme.colors
     // 表单收起(测试通过存好了,或取消)后页面上没有要打字的地方,顺手收起键盘
     val focus = LocalFocusManager.current
     LaunchedEffect(ui.showForm) { if (!ui.showForm) focus.clearFocus() }
-    val onPick: (ModelRole) -> Unit = { role -> if (ui.providers.isEmpty()) actions.openForm() else actions.pickRole(role) }
+    val onPick = actions.pickRole
     val scrollState = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) {
         androidx.compose.foundation.ScrollState(initial = 0)
     }
@@ -427,8 +441,8 @@ fun ModelSetupContent(ui: ModelSetupUi, onboarding: Boolean, actions: ModelSetup
                             ListRow(MikaIcons.Chart, UsageCopy.TITLE, first = true, onClick = openUsage) { RowChevron() }
                         }
                     }
-                    RolesSection(ui, onPick, actions.setReasoningEffort, actions.setModelContext)
-                    SpeechVoiceSection(ui, actions.openSpeech, actions.openVoice)
+                    RolesSection(ui, onPick, actions.setReasoningEffort, actions.setModelContext, actions.openVoice, voiceChoice)
+                    SpeechSection(ui, actions.openSpeech)
                     ImageModelSection(ui, actions.openImage)
                     actions.openDecision?.let { openDecision ->
                         GroupCard {
@@ -476,40 +490,23 @@ private fun ProvidersSection(ui: ModelSetupUi, actions: ModelSetupActions) {
         }
     }
     ui.probeNote?.let { FooterNote(it, Modifier.testTag("setup-probe-note"), color = c.warn) }
-    // 刚存下的那家一个模型都没试通过:直接去选主模型(选的时候先试调用)
-    if (ui.pickToProbe != null && ui.roles.main == null) {
-        Text(
-            ModelSetupCopy.PICK_MAIN,
-            Modifier.padding(start = 16.dp, bottom = 12.dp).clickable { actions.pickRole(ModelRole.Main) }.testTag("setup-pick-main").padding(vertical = 4.dp),
-            style = MikaType.Label, color = c.accent,
-        )
-    }
-    if (ui.showForm) AddProviderForm(ui, actions)
+    if (ui.providers.isEmpty()) AddProviderForm(ui, actions)
     FooterNote(ModelsCopy.KEY_NOTE)
 }
 
 /** 添加服务商:先是「用账号登录」一组(不用填 Key),再是填 Key 的:预设胶囊 → (自定义时)接口类型和地址 → API Key →「测试并保存」。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions) {
+private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions, standalone: Boolean = false) {
     val c = MikaTheme.colors
     val f = ui.form
     var showKey by remember { mutableStateOf(false) }
     var confirmUntested by remember { mutableStateOf(false) }
-    // Header row: title + cancel
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    if (!standalone) {
         Text(
-            "Connect a Provider",
-            Modifier.weight(1f).padding(top = 16.dp, bottom = 8.dp),
+            ModelsCopy.ADD_PROVIDER, Modifier.padding(top = 16.dp, bottom = 8.dp),
             style = MikaType.Body, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            fontSize = 15.sp, color = c.ink,
         )
-        if (ui.providers.isNotEmpty()) {
-            Text(
-                ModelSetupCopy.CANCEL, Modifier.clickable(onClick = actions.closeForm).padding(horizontal = 4.dp, vertical = 6.dp),
-                style = MikaType.Caption, color = c.accent,
-            )
-        }
     }
     // Sign-in options (ChatGPT, xAI, OpenRouter)
     AccountSignInGroup(ui, actions.openSignIn, actions.openProvider)
@@ -697,10 +694,14 @@ private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions) {
             style = MikaType.Caption, color = c.accent,
         )
     }
-    if (f.manual && !f.noList) FooterNote(ModelSetupCopy.MANUAL_NOTE, Modifier.testTag("setup-manual-note"))
+    if (f.manual && !f.noList) {
+        FooterNote(tr(R.string.model_manual_catalog_note), Modifier.testTag("setup-manual-note"))
+    }
     f.urlProblem?.takeIf { f.urlEditable && f.baseUrl.isNotBlank() }?.let { FooterNote(it, color = c.bad) }
     f.suggestedPreset?.let { preset -> PresetSuggestion(f, preset.label) { actions.selectPreset(preset.label) } }
-    if (f.noList) FooterNote(if (f.isCustom) ModelSetupCopy.NO_LIST_CUSTOM else ModelSetupCopy.NO_LIST_PRESET, Modifier.testTag("setup-no-list"))
+    if (f.noList) {
+        FooterNote(tr(R.string.model_no_catalog_note), Modifier.testTag("setup-no-list"))
+    }
     if (f.isSelfHosted) FooterNote(ModelSetupCopy.SELF_HOSTED_NOTE, Modifier.testTag("setup-self-hosted"))
     f.unencryptedWarning?.let { FooterNote(it, Modifier.testTag("setup-url-unencrypted"), color = c.warn) }
     MikaButton(
@@ -734,7 +735,7 @@ private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions) {
             TextButton({ confirmUntested = false }) { Text(stringResource(R.string.cancel)) }
         },
     )
-    FooterNote(ModelSetupCopy.TEST_NOTE, Modifier.padding(top = 6.dp))
+    FooterNote(tr(R.string.model_test_catalog_note), Modifier.padding(top = 6.dp))
 }
 
 /**
@@ -817,10 +818,11 @@ internal object SignInPage {
     }
 }
 
-/** 用途:主模型、看图模型、轻量模型各一张卡,点开是选择页。 */
+/** 对话和声音模型共用一组用途卡。 */
 @Composable
 private fun RolesSection(ui: ModelSetupUi, onPick: (ModelRole) -> Unit, onReasoning: (ModelRole, String?) -> Unit,
     onContext: ((String, ModelContextSettings) -> Boolean)? = null,
+    onVoice: (() -> Unit)? = null, voiceChoice: VoiceChoice? = null,
 ) {
     GroupCard {
         ModelRole.entries.forEachIndexed { i, role ->
@@ -844,24 +846,23 @@ private fun RolesSection(ui: ModelSetupUi, onPick: (ModelRole) -> Unit, onReason
                 }
             }
         }
+        if (onVoice != null) {
+            RoleCard(
+                ModelsCopy.VOICE_ICON, stringResource(R.string.role_voice), ModelsCopy.voiceLine(ui.providers, voiceChoice),
+                tag = "role-voice", onClick = onVoice,
+            )
+        }
     }
 }
 
-/** 语音:语音转文字、声音模型两行,行样式和决策模型一样。 */
+/** 语音转文字独立设置。 */
 @Composable
-private fun SpeechVoiceSection(ui: ModelSetupUi, onSpeech: (() -> Unit)?, onVoice: (() -> Unit)?) {
-    if (onSpeech == null && onVoice == null) return
+private fun SpeechSection(ui: ModelSetupUi, onSpeech: (() -> Unit)?) {
+    if (onSpeech == null) return
     GroupCard {
-        var first = true
-        if (onSpeech != null) {
-            ListRow(ModelsCopy.SPEECH_ICON, stringResource(R.string.role_speech), first = first, onClick = onSpeech) {
-                RowValue(ModelsCopy.speechLine(ui).title)
-                RowChevron()
-            }
-            first = false
-        }
-        if (onVoice != null) {
-            ListRow(ModelsCopy.VOICE_ICON, stringResource(R.string.role_voice), onClick = onVoice) { RowChevron() }
+        ListRow(ModelsCopy.SPEECH_ICON, stringResource(R.string.role_speech), first = true, onClick = onSpeech) {
+            RowValue(ModelsCopy.speechLine(ui).title)
+            RowChevron()
         }
     }
 }
@@ -1245,9 +1246,10 @@ private fun ModelContextControl(ui: ModelSetupUi, role: ModelRole,
 /** 模型的能力标签;[accent] 为假时一律中性色(列表行里强调色留给「在用」的胶囊)。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun Tags(o: ModelOption, forVision: Boolean = false, accent: Boolean = true) {
+internal fun Tags(o: ModelOption, forVision: Boolean = false, accent: Boolean = true, tts: Boolean = false) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         ModelSetupCopy.tags(o, forVision).forEach { (text, strong) -> CapabilityTag(text, if (strong && accent) TagTone.Accent else TagTone.Neutral) }
+        if (tts) CapabilityTag(stringResource(R.string.role_tts), TagTone.Accent)
     }
 }
 
@@ -1272,14 +1274,10 @@ object ModelSetupCopy {
     val TEST_AND_SAVE: String get() = tr(R.string.model_test_save)
     val TESTING: String get() = tr(R.string.model_testing)
     val PICK_MAIN: String get() = tr(R.string.model_pick_main)
-    val TEST_NOTE: String get() = tr(R.string.model_test_note)
     val SELF_HOSTED_NOTE: String get() = tr(R.string.model_self_hosted_note)
     val MODEL_NAME: String get() = tr(R.string.model_manual_name)
-    val NO_LIST_CUSTOM: String get() = tr(R.string.model_no_list_custom)
-    val NO_LIST_PRESET: String get() = tr(R.string.model_no_list_preset)
     val MANUAL_ON: String get() = tr(R.string.model_manual_on)
     val MANUAL_OFF: String get() = tr(R.string.model_manual_off)
-    val MANUAL_NOTE: String get() = tr(R.string.model_manual_note)
     val SAVE_UNTESTED: String get() = tr(R.string.model_save_untested)
     val SAVE_UNTESTED_TITLE: String get() = tr(R.string.model_save_untested_title)
     val SAVE_UNTESTED_BODY: String get() = tr(R.string.model_save_untested_body)

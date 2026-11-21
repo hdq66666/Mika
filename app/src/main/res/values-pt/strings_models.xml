@@ -47,9 +47,9 @@
     <string name="models_new_key_hint">Cole a nova chave</string>
     <string name="save">Salvar</string>
     <string name="models_models">Modelos</string>
-    <string name="models_models_note">Toque em um modelo para usá-lo como modelo principal, de visão ou leve.</string>
-    <string name="models_no_list_note">Este provedor não tem lista de modelos. Para usar um modelo dele, digite em “Funções” o nome que consta na documentação.</string>
-    <string name="models_untested_note">Este provedor foi salvo sem teste, então não se sabe se funciona. Escolha um modelo para testá-lo ou toque em Atualizar para listar os modelos dele.</string>
+    <string name="models_models_note">Toque em um modelo para escolher sua função.</string>
+    <string name="models_no_list_note">Este provedor não retorna uma lista de modelos. No campo acima, insira um ID de modelo que conste na documentação do provedor.</string>
+    <string name="models_untested_note">Este provedor foi salvo sem teste. Toque em Atualizar para obter a lista de modelos.</string>
     <string name="models_not_listed">Os modelos deste provedor ainda não foram listados.</string>
     <string name="refresh">Atualizar</string>
     <string name="models_in_use">Em uso</string>
@@ -64,9 +64,11 @@
     <string name="role_main">Modelo principal</string>
     <string name="role_vision">Modelo de visão</string>
     <string name="role_light">Modelo leve</string>
+    <string name="role_tts">Modelo TTS</string>
     <string name="role_main_what">Pensa e age</string>
     <string name="role_vision_what">Olha as capturas de tela</string>
     <string name="role_light_what">Tarefas pequenas, como verificações e anotações</string>
+    <string name="role_tts_what">Disponível nas configurações do modelo de voz</string>
     <string name="role_main_hint">Escolha um modelo com chamada de ferramentas para as tarefas rodarem com segurança.</string>
     <string name="role_vision_hint">Opcional: sem ele, o Mika lê a tela como texto.</string>
     <string name="role_light_hint">O ideal é barato e rápido.</string>
@@ -133,8 +135,11 @@
     <string name="chatgpt_page_back">Voltar ao Mika</string>
     <string name="chatgpt_no_browser">Nenhum navegador encontrado para fazer o login.</string>
     <string name="models_unverified">Não testado; as tarefas podem falhar</string>
-    <string name="models_unverified_note">Este provedor não tem lista de modelos, e %1$s (em uso) não passou em um teste, então as tarefas podem falhar. Toque em “Testar de novo” para fazer uma chamada de teste com ele.</string>
+    <string name="models_unverified_note">Os modelos em uso (%1$s) ainda não passaram no teste. Para verificar um deles, toque no botão de teste correspondente.</string>
     <string name="models_retest">Testar de novo</string>
+    <string name="models_retest_model">Testar %1$s</string>
+    <string name="models_retest_confirm_title">Testar o modelo?</string>
+    <string name="models_retest_confirm_body">O Mika enviará uma solicitação de teste de chamada de ferramenta ao modelo %1$s no provedor %2$s.</string>
 
     <string name="account_signin_copied">Copiado</string>
     <string name="account_signin_notif_title">Entrando na sua conta</string>
@@ -211,13 +216,14 @@
     <string name="main_fallback_clear">No fallback</string>
     <string name="main_fallback_failed">Could not set the fallback model</string>
     <string name="main_fallback_is_main">This is the current main model, so it cannot also be its fallback</string>
-    <string name="role_voice">Voice model</string>
+    <string name="role_voice">Modelo de voz</string>
     <string name="role_voice_what">Lets Mika speak and read answers aloud</string>
     <string name="voice_enable">Allow Mika to speak</string>
     <string name="voice_enable_note">Speech is only made when you tap Read aloud, unless auto-read is on</string>
-    <string name="voice_provider">Service</string>
-    <string name="voice_no_providers">Add a model service first (speech uses the same service and key).</string>
-    <string name="voice_model_name">Model</string>
+    <string name="voice_provider">Provedor</string>
+    <string name="voice_no_providers">Primeiro, adicione um provedor em «Modelo».</string>
+    <string name="voice_no_tts_models">Abra um modelo em «Modelo → Provedores» e marque-o como modelo TTS em «Usar como».</string>
+    <string name="voice_model_name">Modelo</string>
     <string name="voice_protocol">API</string>
     <string name="voice_protocol_openai">OpenAI Speech</string>
     <string name="voice_protocol_gemini">Gemini TTS</string>

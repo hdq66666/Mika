@@ -9,9 +9,33 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class VoiceSettingsTest {
+    @get:Rule val tmp = TemporaryFolder()
+
+    @Test fun existingVoiceIsMarkedOnlyOnceAndKeepsItsSettings() {
+        val store = ProviderStore(tmp.root, AesGcmKeyCipher { error("No credentials in this fixture") })
+        val p = store.connect("Speech", ProviderConfig.Kind.OpenAiCompat, "https://tts.test/v1", null, emptyList())
+        val prefs = MemoryPrefs()
+        val choice = VoiceChoice(p.id, "private-tts", TtsProtocol.OpenAiSpeech, "kaguya", speed = 1.25f)
+        val settings = VoiceSettings(prefs)
+        settings.setChoice(choice)
+
+        settings.reconcileTtsChoice(store)
+        assertEquals(setOf("private-tts"), store.provider(p.id)?.ttsModels)
+        assertEquals(choice, settings.state.value.choice)
+
+        store.setTtsModel(p.id, "private-tts", false)
+        val restarted = VoiceSettings(prefs)
+        restarted.reconcileTtsChoice(store)
+        assertTrue(store.provider(p.id)!!.ttsModels.isEmpty())
+        assertNull(restarted.state.value.choice)
+        assertNull(VoiceSettings(prefs).state.value.choice)
+    }
+
     @Test fun settingsPageAndChatShareLiveConfiguration() {
         val prefs = MemoryPrefs()
         val context = object : ContextWrapper(null), VoiceSettings.Owner {
