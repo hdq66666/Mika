@@ -11,6 +11,7 @@ import com.wangzan101.mika.core.model.TtsModel
 import com.wangzan101.mika.core.model.TtsRequest
 import com.wangzan101.mika.core.model.TtsResponse
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -60,13 +61,32 @@ class VoicePlayer(private val context: Context) {
         request: TtsRequest,
         streaming: Boolean,
         onStarted: () -> Unit = {},
+    ) = playRequests(model, listOf(request), streaming, onStarted)
+
+    /** 按顺序朗读同一条回答的各段。 */
+    internal suspend fun playRequests(
+        model: TtsModel,
+        requests: List<TtsRequest>,
+        streaming: Boolean,
+        onStarted: () -> Unit = {},
     ) = loadAndPlay {
-        if (streaming && model is StreamingTtsModel) {
-            playStream(model.streamAudio(request), onStarted)
-        } else {
-            val response = model.synthesize(request)
-            prepareFile(response.bytes, response.mime, onStarted)
+        var streamModel = if (streaming) model as? StreamingTtsModel else null
+        for ((index, request) in requests.withIndex()) {
+            val stream = streamModel
+            val started = { if (index == 0) onStarted() }
+            val complete = if (stream != null) collectStream(stream.streamAudio(request), started) else model.synthesize(request)
+            if (complete != null) {
+                // 后续段沿用已经确认可播放的完整音频路径。
+                streamModel = null
+                drainPcm(VoicePlayback.Loading)
+                _state.value = VoicePlayback.Loading
+                val completion = if (index < requests.lastIndex) CompletableDeferred<VoicePlayback>() else null
+                prepareFile(complete.bytes, complete.mime, started, completion)
+                val result = completion?.await()
+                if (result is VoicePlayback.Error) error(result.message)
+            }
         }
+        drainPcm()
     }
 
     private suspend fun loadAndPlay(block: suspend () -> Unit) = withContext(Dispatchers.Main.immediate) {
@@ -87,25 +107,36 @@ class VoicePlayer(private val context: Context) {
         }
     }
 
-    private suspend fun playStream(parts: Flow<TtsAudioPart>, onStarted: () -> Unit) {
+    private suspend fun collectStream(parts: Flow<TtsAudioPart>, onStarted: () -> Unit): TtsResponse? {
         var complete: TtsResponse? = null
+        var receivedPcm = false
         parts.collect { part ->
             check(complete == null) { "unexpected audio after a complete response" }
             when (part) {
-                is TtsAudioPart.Pcm -> playPcmChunk(part, onStarted)
+                is TtsAudioPart.Pcm -> {
+                    val current = pcmTrack
+                    if (!receivedPcm && current != null &&
+                        (current.sampleRate != part.sampleRate || current.channels != part.channels)
+                    ) {
+                        drainPcm(VoicePlayback.Loading)
+                    }
+                    playPcmChunk(part, onStarted)
+                    receivedPcm = true
+                }
                 is TtsAudioPart.Complete -> {
-                    check(pcmTrack == null) { "unexpected complete audio after PCM" }
+                    check(!receivedPcm) { "unexpected complete audio after PCM" }
                     complete = part.response
                 }
             }
         }
-        complete?.let { response ->
-            prepareFile(response.bytes, response.mime, onStarted)
-            return
-        }
-        val audio = checkNotNull(pcmTrack) { "empty PCM stream" }
+        check(receivedPcm || complete != null) { "empty audio stream" }
+        return complete
+    }
+
+    private suspend fun drainPcm(nextState: VoicePlayback = VoicePlayback.Idle) {
+        val audio = pcmTrack ?: return
         audio.drain()
-        release(VoicePlayback.Idle)
+        release(nextState)
     }
 
     private suspend fun playPcmChunk(chunk: TtsAudioPart.Pcm, onStarted: () -> Unit) {
@@ -135,7 +166,17 @@ class VoicePlayer(private val context: Context) {
         }
     }
 
-    private suspend fun prepareFile(bytes: ByteArray, mime: String, onStarted: () -> Unit = {}) {
+    private suspend fun prepareFile(
+        bytes: ByteArray,
+        mime: String,
+        onStarted: () -> Unit = {},
+        completion: CompletableDeferred<VoicePlayback>? = null,
+    ) {
+        fun finishSegment(result: VoicePlayback) {
+            release(if (completion != null && result == VoicePlayback.Idle) VoicePlayback.Loading else result)
+            completion?.complete(result)
+        }
+
         val dir = File(context.cacheDir, "voice")
         val f = File(dir, "tts-${System.nanoTime()}.${extensionOf(mime)}")
         try {
@@ -161,18 +202,18 @@ class VoicePlayer(private val context: Context) {
                         _state.value = VoicePlayback.Playing
                         onStarted()
                     } else {
-                        release(VoicePlayback.Error("audio focus is not available"))
+                        finishSegment(VoicePlayback.Error("audio focus is not available"))
                     }
                 }
-                setOnCompletionListener { if (player === it) release(VoicePlayback.Idle) }
+                setOnCompletionListener { if (player === it) finishSegment(VoicePlayback.Idle) }
                 setOnErrorListener { failed, what, extra ->
-                    if (player === failed) release(VoicePlayback.Error("player error $what/$extra"))
+                    if (player === failed) finishSegment(VoicePlayback.Error("player error $what/$extra"))
                     true
                 }
                 prepareAsync()
             }
         } catch (e: Exception) {
-            release(VoicePlayback.Error(e.message ?: "cannot play audio"))
+            finishSegment(VoicePlayback.Error(e.message ?: "cannot play audio"))
         }
     }
 
@@ -184,7 +225,8 @@ class VoicePlayer(private val context: Context) {
     private fun onMediaFocusChange(media: MediaPlayer, change: Int) {
         if (player !== media) return
         when (change) {
-            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (media.isPlaying) media.pause()
+            AudioManager.AUDIOFOCUS_LOSS -> stop()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (media.isPlaying) media.pause()
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> media.setVolume(0.2f, 0.2f)
             AudioManager.AUDIOFOCUS_GAIN -> {
                 media.setVolume(1f, 1f)
