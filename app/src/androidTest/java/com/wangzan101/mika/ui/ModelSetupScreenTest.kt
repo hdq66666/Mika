@@ -20,6 +20,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wangzan101.mika.core.model.Capabilities
 import com.wangzan101.mika.core.model.ListedModel
@@ -34,6 +35,7 @@ import com.wangzan101.mika.settings.RoleChoice
 import com.wangzan101.mika.settings.RoleChoices
 import com.wangzan101.mika.settings.TtsProtocol
 import com.wangzan101.mika.settings.VoiceChoice
+import com.wangzan101.mika.settings.VoiceSettings
 import com.wangzan101.mika.ui.theme.MikaTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -151,6 +153,38 @@ class ModelSetupScreenTest {
         compose.onNodeWithTag("role-voice").performScrollTo()
             .assertTextContains("tts-a").assertTextContains("DeepSeek").performClick()
         assertEquals(listOf("voice"), calls)
+    }
+
+    @Test fun voiceSettingsShowsMarkedModelsInlineAndKeepsSelectionOnPage() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefsName = "voice-inline-${tmp.root.name}"
+        val prefs = context.getSharedPreferences(prefsName, android.content.Context.MODE_PRIVATE)
+        val settings = VoiceSettings(prefs)
+        val store = navStore()
+        val p = store.connect("Mixed", deepseek.kind, "https://mixed.test/v1", null,
+            listOf(ListedModel("speech-a"), ListedModel("speech-b"), ListedModel("chat-only")))
+        store.connect("Other", deepseek.kind, "https://other.test/v1", null, listOf(ListedModel("other-chat")))
+        assertTrue(store.setTtsModel(p.id, "speech-a", true))
+        assertTrue(store.setTtsModel(p.id, "speech-b", true))
+        val choice = VoiceChoice(p.id, "speech-a", TtsProtocol.OpenAiSpeech, "voice-a", speed = 1.25f)
+        settings.setChoice(choice)
+        var backs = 0
+        try {
+            compose.setContent { MikaTheme { VoiceModelContent(store, settings) { backs++ } } }
+            compose.onNodeWithText("Mixed").assertIsDisplayed()
+            compose.onNodeWithText("speech-a").assertIsSelected()
+            compose.onNodeWithText("chat-only").assertDoesNotExist()
+            compose.onNodeWithText("Other").assertDoesNotExist()
+            compose.onNodeWithText("speech-b").performScrollTo().performClick().assertIsSelected()
+            compose.onNodeWithText("speech-a").assertIsNotSelected()
+            assertEquals(choice.copy(model = "speech-b"), settings.state.value.choice)
+            compose.onNodeWithText("voice-a").performScrollTo().assertIsDisplayed()
+            assertEquals(0, backs)
+            compose.onNodeWithContentDescription("返回").performClick()
+            assertEquals(1, backs)
+        } finally {
+            context.deleteSharedPreferences(prefsName)
+        }
     }
 
     @Test fun settingsPageOpensTokenUsageButOnboardingDoesNotShowIt() {
