@@ -174,6 +174,48 @@ class ModelSetupScreenTest {
         compose.onNodeWithTag("setup-next").assertIsEnabled()
     }
 
+    private fun navStore() = ProviderStore(tmp.root, AesGcmKeyCipher { error("No key in this fixture") },
+        modelLister = { _, _, _, _ -> error("Navigation must not query the fixture provider") },
+        modelFactory = { _, _, _, _ -> error("Navigation must not run inference") },
+    )
+
+    private fun openFormAndGoBack(pickerTitle: String) {
+        compose.awaitOne(ModelsCopy.ADD_PROVIDER).performScrollTo().performClick()
+        compose.onNodeWithTag("setup-test").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.awaitOne(pickerTitle).assertIsDisplayed()
+        compose.onNodeWithTag("setup-test").assertDoesNotExist()
+    }
+
+    @Test fun addProviderReturnsToEachRoleAfterOnlyChatModelIsMarkedTts() {
+        val store = navStore()
+        val id = "local-model"
+        val p = store.connect("Local", deepseek.kind, "https://local.test/v1", null, listOf(ListedModel(id)))
+        assertTrue(store.use(ModelRole.Main, p.id, id, caps))
+        assertTrue(store.setTtsModel(p.id, id, true))
+        compose.setContent { MikaTheme { ModelSetupScreen(store, onboarding = false, onBack = {}, onDone = {}) } }
+        for (role in ModelRole.entries) {
+            compose.onNodeWithTag("role-${role.name.lowercase()}").performScrollTo().performClick()
+            compose.awaitOne(ModelsCopy.ROLE_EMPTY).assertIsDisplayed()
+            openFormAndGoBack(ModelsCopy.roleName(role))
+            compose.onNodeWithContentDescription("返回").performClick()
+        }
+    }
+
+    @Test fun addingProviderFromFallbackReturnsToItsRoleAndSlot() {
+        val store = navStore()
+        val id = "local-model"
+        val p = store.connect("Local", deepseek.kind, "https://local.test/v1", null, listOf(ListedModel(id)))
+        for (role in ModelRole.entries) assertTrue(store.use(role, p.id, id, caps))
+        compose.setContent { MikaTheme { ModelSetupScreen(store, onboarding = false, onBack = {}, onDone = {}) } }
+        for (role in ModelRole.entries) {
+            compose.onNodeWithText("${ModelsCopy.roleName(role)} 故障转移链").performScrollTo().performClick()
+            compose.onNodeWithTag("role-fallback-${role.name.lowercase()}-0").performScrollTo().performClick()
+            openFormAndGoBack(ModelsCopy.fallbackLabel(role, 0))
+            compose.onNodeWithContentDescription("返回").performClick()
+        }
+    }
+
     @Test fun contextFormValidatesPreviewsAndSavesTheModelUsedForNewTasks() {
         val store = ProviderStore(tmp.root, AesGcmKeyCipher { error("Fixture has no API key") })
         val provider = store.connect("Test", deepseek.kind, "https://example.test/v1", null, listOf(ListedModel("m")))

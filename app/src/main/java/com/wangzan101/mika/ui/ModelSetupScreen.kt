@@ -152,12 +152,11 @@ fun ModelSetupScreen(
     LaunchedEffect(ui.signedInProvider) {
         val id = ui.signedInProvider ?: return@LaunchedEffect
         signInSheet = null
-        picking = null
-        pickingFallbackRole = null
-        pickingFallbackSlot = null
-        openProvider = id
-        allModels = false
-        showProviders = false
+        if (picking == null && pickingFallbackSlot == null) {
+            openProvider = id
+            allModels = false
+            showProviders = false
+        }
         vm.signedInShown()
     }
     // ChatGPT 登录成功照旧留在这一页(第一次会说明在用套餐额度),面板收起
@@ -174,7 +173,11 @@ fun ModelSetupScreen(
         saveUntested = vm::saveWithoutTest,
         openForm = vm::openForm, closeForm = vm::closeForm,
         // 从服务商页面进详情时留着 showProviders:返回落回服务商页面,不是模型页
-        openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it },
+        openProvider = {
+            if (ui.formOpen) vm.closeForm()
+            openProvider = it
+            allModels = false
+        }, pickRole = { picking = it },
         pickFallback = { pickingFallbackRole = ModelRole.Main; pickingFallbackSlot = it },
         pickRoleFallback = { r, s -> pickingFallbackRole = r; pickingFallbackSlot = s },
         clearFallback = vm::clearFallback,
@@ -184,7 +187,7 @@ fun ModelSetupScreen(
         setReasoningEffort = vm::setReasoningEffort, setModelContext = vm::setModelContext,
     )
     // 内部子页:标识稳定(换数据不重演动画)、带着层级(决定滑动方向)
-    val subPage: ModelSubPage = when {
+    val origin: ModelSubPage = when {
         openDecision -> ModelSubPage.Decision
         provider != null && allModels -> ModelSubPage.AllModels(provider.id, showProviders)
         provider != null -> ModelSubPage.Detail(provider.id, showProviders)
@@ -193,11 +196,18 @@ fun ModelSetupScreen(
         role != null -> ModelSubPage.RolePick(role)
         else -> ModelSubPage.Main
     }
+    val subPage = if (ui.formOpen) ModelSubPage.AddProvider(origin.depth + 1) else origin
     // 换页动画期间旧页还在渲染:服务商刚删掉时详情页也能从缓存里拿到数据画完退出
     var heldProviders by remember { mutableStateOf(ui.providers) }
     if (ui.providers.isNotEmpty()) heldProviders = ui.providers
     NavSlide(subPage, depth = { it.depth }) { page ->
     when (page) {
+        is ModelSubPage.AddProvider -> {
+            BackHandler(onBack = vm::closeForm)
+            Page(ModelsCopy.ADD_PROVIDER, onBack = vm::closeForm) {
+                AddProviderForm(ui, actions, standalone = true)
+            }
+        }
         is ModelSubPage.Decision -> JevSettingsScreen(remember { DecisionSettings.get(context) }, onBack = { openDecision = false })
         is ModelSubPage.Detail, is ModelSubPage.AllModels -> {
             val pid = if (page is ModelSubPage.Detail) page.id else (page as ModelSubPage.AllModels).id
@@ -263,7 +273,7 @@ fun ModelSetupScreen(
                             pickingFallbackRole = null
                         }
                     },
-                    addProvider = { vm.openForm(); pickingFallbackSlot = null; pickingFallbackRole = null },
+                    addProvider = vm::openForm,
                 ),
                 onBack = { pickingFallbackSlot = null; pickingFallbackRole = null },
                 titleOverride = ModelsCopy.fallbackLabel(role, slot),
@@ -289,7 +299,7 @@ fun ModelSetupScreen(
                 RolePickerActions(
                     pick = { pid, model -> vm.pick(role, pid, model) { picking = null } },
                     choose = { vm.choose(role, it); picking = null },
-                    addProvider = { vm.openForm(); picking = null },
+                    addProvider = vm::openForm,
                 ),
                 onBack = { picking = null },
             )
@@ -310,8 +320,6 @@ fun ModelSetupScreen(
                 cancel = { k -> if (k.account != null) vm.cancelAccountSignIn() else vm.cancelChatGptSignIn() },
                 useApiKey = { k ->
                     signInSheet = null
-                    openProvider = null
-                    picking = null
                     vm.openForm()
                     k.keyPreset?.let(vm::selectPreset)
                 },
@@ -333,6 +341,7 @@ private sealed class ModelSubPage(val depth: Int) {
     data object Main : ModelSubPage(0)
     data object Decision : ModelSubPage(1)
     data object Providers : ModelSubPage(1)
+    data class AddProvider(val level: Int) : ModelSubPage(level)
     data class Detail(val id: String, val fromProviders: Boolean) : ModelSubPage(if (fromProviders) 2 else 1)
     data class AllModels(val id: String, val fromProviders: Boolean) : ModelSubPage(if (fromProviders) 3 else 2)
     data class FallbackPick(val role: ModelRole, val slot: Int) : ModelSubPage(1)
@@ -392,7 +401,7 @@ fun ModelSetupContent(
     // 表单收起(测试通过存好了,或取消)后页面上没有要打字的地方,顺手收起键盘
     val focus = LocalFocusManager.current
     LaunchedEffect(ui.showForm) { if (!ui.showForm) focus.clearFocus() }
-    val onPick: (ModelRole) -> Unit = { role -> if (ui.providers.isEmpty()) actions.openForm() else actions.pickRole(role) }
+    val onPick = actions.pickRole
     val scrollState = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) {
         androidx.compose.foundation.ScrollState(initial = 0)
     }
@@ -480,32 +489,23 @@ private fun ProvidersSection(ui: ModelSetupUi, actions: ModelSetupActions) {
         }
     }
     ui.probeNote?.let { FooterNote(it, Modifier.testTag("setup-probe-note"), color = c.warn) }
-    if (ui.showForm) AddProviderForm(ui, actions)
+    if (ui.providers.isEmpty()) AddProviderForm(ui, actions)
     FooterNote(ModelsCopy.KEY_NOTE)
 }
 
 /** 添加服务商:先是「用账号登录」一组(不用填 Key),再是填 Key 的:预设胶囊 → (自定义时)接口类型和地址 → API Key →「测试并保存」。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions) {
+private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions, standalone: Boolean = false) {
     val c = MikaTheme.colors
     val f = ui.form
     var showKey by remember { mutableStateOf(false) }
     var confirmUntested by remember { mutableStateOf(false) }
-    // Header row: title + cancel
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    if (!standalone) {
         Text(
-            "Connect a Provider",
-            Modifier.weight(1f).padding(top = 16.dp, bottom = 8.dp),
+            ModelsCopy.ADD_PROVIDER, Modifier.padding(top = 16.dp, bottom = 8.dp),
             style = MikaType.Body, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            fontSize = 15.sp, color = c.ink,
         )
-        if (ui.providers.isNotEmpty()) {
-            Text(
-                ModelSetupCopy.CANCEL, Modifier.clickable(onClick = actions.closeForm).padding(horizontal = 4.dp, vertical = 6.dp),
-                style = MikaType.Caption, color = c.accent,
-            )
-        }
     }
     // Sign-in options (ChatGPT, xAI, OpenRouter)
     AccountSignInGroup(ui, actions.openSignIn, actions.openProvider)
