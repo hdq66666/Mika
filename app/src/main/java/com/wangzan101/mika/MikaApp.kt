@@ -419,7 +419,7 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
                 words,
                 voiceSettings,
                 model = { choice, caps -> ProviderStore.get(this).ttsModel(choice, caps) },
-                play = { voicePlayer.play(it.bytes, it.mime) },
+                play = { model, request, streaming -> voicePlayer.play(model, request, streaming) },
             )
         },
     ) = synthesize(text)

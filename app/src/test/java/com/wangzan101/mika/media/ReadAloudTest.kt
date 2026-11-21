@@ -23,17 +23,17 @@ class ReadAloudTest {
 
         readAloud("answer", restored,
             model = { _, _ -> error("disabled voice must not resolve a provider") },
-            play = { error("disabled voice must not play audio") },
+            play = { _, _, _ -> error("disabled voice must not play audio") },
         )
     }
 
     @Test fun enabledVoiceUsesSettingsAndDisablingBlocksTheNextCall() = runTest {
         val settings = VoiceSettings(MemoryPrefs())
-        settings.setChoice(VoiceChoice("p", "m", TtsProtocol.OpenAiSpeech, "alloy", 1.2f))
+        settings.setChoice(VoiceChoice("p", "m", TtsProtocol.OpenAiSpeech, "alloy", 1.2f, streaming = true))
         settings.setMaxChars(4)
         val requests = mutableListOf<TtsRequest>()
         var resolved = 0
-        var played = 0
+        val streamingChoices = mutableListOf<Boolean>()
         val model = object : TtsModel {
             override val name = "test"
             override val capabilities = TtsCapabilities()
@@ -44,7 +44,10 @@ class ReadAloudTest {
         }
         suspend fun speak() = readAloud("answer", settings,
             model = { _, _ -> resolved++; model },
-            play = { played++ },
+            play = { selected, request, streaming ->
+                selected.synthesize(request)
+                streamingChoices += streaming
+            },
         )
 
         speak()
@@ -52,7 +55,7 @@ class ReadAloudTest {
         speak()
 
         assertEquals(1, resolved)
-        assertEquals(1, played)
+        assertEquals(listOf(true), streamingChoices)
         assertEquals(listOf(TtsRequest("answ", "alloy", 1.2f, "wav")), requests)
     }
 }
