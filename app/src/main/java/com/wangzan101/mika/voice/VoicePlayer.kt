@@ -6,10 +6,10 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import com.wangzan101.mika.core.model.StreamingTtsModel
-import com.wangzan101.mika.core.model.TtsError
+import com.wangzan101.mika.core.model.TtsAudioPart
 import com.wangzan101.mika.core.model.TtsModel
-import com.wangzan101.mika.core.model.TtsPcmChunk
 import com.wangzan101.mika.core.model.TtsRequest
+import com.wangzan101.mika.core.model.TtsResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,15 +62,11 @@ class VoicePlayer(private val context: Context) {
         onStarted: () -> Unit = {},
     ) = loadAndPlay {
         if (streaming && model is StreamingTtsModel) {
-            try {
-                playPcm(model.streamPcm(request), onStarted)
-                return@loadAndPlay
-            } catch (e: TtsError.StreamingUnsupported) {
-                if (pcmTrack != null) throw e
-            }
+            playStream(model.streamAudio(request), onStarted)
+        } else {
+            val response = model.synthesize(request)
+            prepareFile(response.bytes, response.mime, onStarted)
         }
-        val response = model.synthesize(request)
-        prepareFile(response.bytes, response.mime, onStarted)
     }
 
     private suspend fun loadAndPlay(block: suspend () -> Unit) = withContext(Dispatchers.Main.immediate) {
@@ -91,36 +87,52 @@ class VoicePlayer(private val context: Context) {
         }
     }
 
-    private suspend fun playPcm(chunks: Flow<TtsPcmChunk>, onStarted: () -> Unit) {
-        chunks.collect { chunk ->
-            val first = pcmTrack == null
-            val audio = pcmTrack ?: PcmAudioTrack(attributes, chunk.sampleRate, chunk.channels).also { track ->
-                pcmTrack = track
-                check(requestFocus { change ->
-                    if (pcmTrack === track) {
-                        when (change) {
-                            AudioManager.AUDIOFOCUS_LOSS -> stop()
-                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> track.pause()
-                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> track.setVolume(0.2f)
-                            AudioManager.AUDIOFOCUS_GAIN -> {
-                                track.setVolume(1f)
-                                track.resume()
-                            }
-                        }
-                    }
-                }) { "audio focus is not available" }
-                track.resume()
+    private suspend fun playStream(parts: Flow<TtsAudioPart>, onStarted: () -> Unit) {
+        var complete: TtsResponse? = null
+        parts.collect { part ->
+            check(complete == null) { "unexpected audio after a complete response" }
+            when (part) {
+                is TtsAudioPart.Pcm -> playPcmChunk(part, onStarted)
+                is TtsAudioPart.Complete -> {
+                    check(pcmTrack == null) { "unexpected complete audio after PCM" }
+                    complete = part.response
+                }
             }
-            check(audio.sampleRate == chunk.sampleRate && audio.channels == chunk.channels) { "PCM format changed during playback" }
-            audio.write(chunk.bytes)
-            if (first) {
-                _state.value = VoicePlayback.Playing
-                onStarted()
-            }
+        }
+        complete?.let { response ->
+            prepareFile(response.bytes, response.mime, onStarted)
+            return
         }
         val audio = checkNotNull(pcmTrack) { "empty PCM stream" }
         audio.drain()
         release(VoicePlayback.Idle)
+    }
+
+    private suspend fun playPcmChunk(chunk: TtsAudioPart.Pcm, onStarted: () -> Unit) {
+        val first = pcmTrack == null
+        val audio = pcmTrack ?: PcmAudioTrack(attributes, chunk.sampleRate, chunk.channels).also { track ->
+            pcmTrack = track
+            check(requestFocus { change ->
+                if (pcmTrack === track) {
+                    when (change) {
+                        AudioManager.AUDIOFOCUS_LOSS -> stop()
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> track.pause()
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> track.setVolume(0.2f)
+                        AudioManager.AUDIOFOCUS_GAIN -> {
+                            track.setVolume(1f)
+                            track.resume()
+                        }
+                    }
+                }
+            }) { "audio focus is not available" }
+            track.resume()
+        }
+        check(audio.sampleRate == chunk.sampleRate && audio.channels == chunk.channels) { "PCM format changed during playback" }
+        audio.write(chunk.bytes)
+        if (first) {
+            _state.value = VoicePlayback.Playing
+            onStarted()
+        }
     }
 
     private suspend fun prepareFile(bytes: ByteArray, mime: String, onStarted: () -> Unit = {}) {

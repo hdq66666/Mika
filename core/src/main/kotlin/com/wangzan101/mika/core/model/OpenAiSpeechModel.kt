@@ -39,27 +39,32 @@ class OpenAiSpeechModel(
             if (!response.isSuccessful) {
                 throw ModelHttp.openAiError(response.code, response.header("retry-after"), response.body?.string().orEmpty(), model)
             }
-            val body = response.body ?: throw TtsError.BadAudio("empty response")
-            val declared = body.contentLength()
-            if (declared > MAX_TTS_BYTES) throw TtsError.TooLarge(declared)
-            val bytes = body.bytes()
-            checkTtsSize(bytes)
-            if (format == "pcm") {
-                TtsResponse(wrapPcm16Wav(bytes, 24_000), "audio/wav", 24_000)
-            } else {
-                TtsResponse(bytes, audioMimeOrBad(bytes, response.header("Content-Type")))
-            }
+            response.readBufferedAudio(format)
         }
     }
 
-    override fun streamPcm(request: TtsRequest): Flow<TtsPcmChunk> = channelFlow {
-        if (request.speed != null && request.speed != 1f) {
-            throw TtsError.StreamingUnsupported("PCM streaming requires speed 1.0")
+    override fun streamAudio(request: TtsRequest): Flow<TtsAudioPart> = channelFlow {
+        if ("pcm" in capabilities.formats && (request.speed == null || request.speed == 1f)) {
+            val emittedAudio = executeCancellable(speechRequest(request, "pcm", streaming = true)) { response ->
+                response.readPlayback { send(it) }
+            }
+            if (emittedAudio) return@channelFlow
         }
-        executeCancellable(speechRequest(request, "pcm", streaming = true)) { response ->
-            response.readPcm { send(it) }
-        }
+        send(TtsAudioPart.Complete(synthesize(request)))
     }.buffer(Channel.RENDEZVOUS)
+
+    private fun Response.readBufferedAudio(format: String): TtsResponse {
+        val audio = body ?: throw TtsError.BadAudio("empty response")
+        val declared = audio.contentLength()
+        if (declared > MAX_TTS_BYTES) throw TtsError.TooLarge(declared)
+        val source = audio.source()
+        if (source.request(MAX_TTS_BYTES.toLong() + 1)) throw TtsError.TooLarge(source.buffer.size)
+        val bytes = source.readByteArray()
+        if (format == "pcm") {
+            return TtsResponse(wrapPcm16Wav(bytes, 24_000), "audio/wav", 24_000)
+        }
+        return TtsResponse(bytes, audioMimeOrBad(bytes, header("Content-Type")))
+    }
 
     private suspend fun <T> executeCancellable(req: Request, read: suspend (Response) -> T): T = coroutineScope {
         val call = http.newCall(req)
@@ -83,10 +88,7 @@ class OpenAiSpeechModel(
         val text = request.text.trim()
         if (text.isEmpty()) throw TtsError.Unsupported("text is empty")
         if (text.length > capabilities.maxChars) throw TtsError.Unsupported("text is longer than ${capabilities.maxChars} characters")
-        if (format !in capabilities.formats) {
-            val message = "format $format is not supported"
-            throw if (streaming) TtsError.StreamingUnsupported(message) else TtsError.Unsupported(message)
-        }
+        if (format !in capabilities.formats) throw TtsError.Unsupported("format $format is not supported")
         val voice = request.voice ?: capabilities.voices?.firstOrNull() ?: throw TtsError.Unsupported("voice is required")
         capabilities.voices?.let { if (voice !in it) throw TtsError.Unsupported("voice $voice is not supported") }
         val payload = buildJsonObject {
@@ -104,17 +106,26 @@ class OpenAiSpeechModel(
             .build()
     }
 
-    private suspend fun Response.readPcm(emit: suspend (TtsPcmChunk) -> Unit) {
+    /** 返回 false 时，尚未交付音频，可以用普通合成请求回退。 */
+    private suspend fun Response.readPlayback(emit: suspend (TtsAudioPart) -> Unit): Boolean {
         if (!isSuccessful) {
             val error = body?.let { peekBody(16 * 1024L).string() }.orEmpty()
-            if (streamRejected(code, error)) {
-                throw TtsError.StreamingUnsupported(ModelAccessErrors.detail(error).ifBlank { "PCM streaming is not supported" })
-            }
+            if (streamRejected(code, error)) return false
             throw ModelHttp.openAiError(code, header("retry-after"), error, model)
         }
 
         val audio = body ?: throw TtsError.BadAudio("empty response")
         val mime = audio.contentType()
+        if (mime?.type != "audio" || mime.subtype != "pcm") {
+            val source = audio.source()
+            source.request(12)
+            val prefix = source.peek().readByteArray(minOf(12L, source.buffer.size))
+            val declared = mime?.let { "${it.type}/${it.subtype}" }
+            if (sniffAudioMime(prefix) == null && declared !in BUFFERED_AUDIO_TYPES) return false
+            emit(TtsAudioPart.Complete(readBufferedAudio("wav")))
+            return true
+        }
+
         val rateHeader = header("x-audio-sample-rate")
         val channelsHeader = header("x-audio-channels")
         val responseUrl = request.url
@@ -123,11 +134,17 @@ class OpenAiSpeechModel(
             responseUrl.isHttps && responseUrl.host == "api.openai.com" && responseUrl.port == 443
         val sampleRate = if (useOpenAiDefaults) 24_000 else rateHeader?.toIntOrNull()
         val channels = if (useOpenAiDefaults) 1 else channelsHeader?.toIntOrNull()
-        if (mime?.type != "audio" || mime.subtype != "pcm" || sampleRate == null ||
-            sampleRate !in 4_000..192_000 || channels == null || channels !in 1..2
-        ) {
-            throw TtsError.StreamingUnsupported("speech endpoint did not return PCM with sample rate and channels")
-        }
+        if (sampleRate == null || sampleRate !in 4_000..192_000 || channels == null || channels !in 1..2) return false
+        readPcm(sampleRate, channels, emit)
+        return true
+    }
+
+    private suspend fun Response.readPcm(
+        sampleRate: Int,
+        channels: Int,
+        emit: suspend (TtsAudioPart.Pcm) -> Unit,
+    ) {
+        val audio = checkNotNull(body)
         val declared = audio.contentLength()
         if (declared > MAX_TTS_BYTES) throw TtsError.TooLarge(declared)
 
@@ -145,7 +162,7 @@ class OpenAiSpeechModel(
             // HTTP 数据块可以断在一个 PCM 帧内。把尾部的字节留给下一次读取。
             val available = remaining + count
             val aligned = available - available % frameSize
-            if (aligned > 0) emit(TtsPcmChunk(buffer.copyOf(aligned), sampleRate, channels))
+            if (aligned > 0) emit(TtsAudioPart.Pcm(buffer.copyOf(aligned), sampleRate, channels))
             buffer.copyInto(buffer, 0, aligned, available)
             remaining = available - aligned
         }
@@ -157,8 +174,20 @@ class OpenAiSpeechModel(
         if (status == 501) return true
         if (status != 400 && status != 422) return false
         val detail = ModelAccessErrors.detail(body).lowercase()
-        return "stream_format" in detail ||
-            ("streaming" in detail && ("not supported" in detail || "unsupported" in detail)) ||
-            ("pcm" in detail && ("response_format" in detail || "response format" in detail))
+        val denied = STREAMING_DENIALS.any { it in detail }
+        return PLAYBACK_FORMAT_PARAM.containsMatchIn(body) ||
+            "stream_format" in detail ||
+            (denied && ("streaming" in detail || "stream format" in detail)) ||
+            (PCM_WORD.containsMatchIn(detail) &&
+                ("response_format" in detail || "response format" in detail || (denied && "format" in detail)))
+    }
+
+    private companion object {
+        val BUFFERED_AUDIO_TYPES = setOf(
+            "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/ogg", "audio/opus", "audio/aac", "audio/flac",
+        )
+        val STREAMING_DENIALS = listOf("not supported", "does not support", "unsupported", "not available", "unavailable")
+        val PLAYBACK_FORMAT_PARAM = Regex(""""param"\s*:\s*"(?:stream_format|response_format)"""")
+        val PCM_WORD = Regex("""\bpcm\b""")
     }
 }
