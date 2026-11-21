@@ -95,7 +95,7 @@ class ImageModelSettingsTest {
         assertEquals(0, noEdit.maxReferences)
     }
 
-    @Test fun imageAdapterRejectsIncompatibleSpeechSynthesisChoicesWithinMixedProviders() {
+    @Test fun imageAdapterExcludesOnlyExplicitlyMarkedTtsModelsWithinMixedProviders() {
         val store = ProviderStore(tmp.root, AesGcmKeyCipher { error("No credentials in this fixture") })
         val provider = store.connect(
             "Mixed", ProviderConfig.Kind.OpenAiCompat, "https://example.test/v1", null,
@@ -107,7 +107,7 @@ class ImageModelSettingsTest {
         settings.setChoice(choice)
         val caps = settings.capabilities()!!
         assertEquals("image-model", store.imageModel(choice, caps)?.name)
-        assertNull(store.imageModel(choice.copy(model = "fishaudio/drama-3-int4"), caps))
+        assertEquals("fishaudio/drama-3-int4", store.imageModel(choice.copy(model = "fishaudio/drama-3-int4"), caps)?.name)
         assertNull(store.imageModel(choice.copy(model = "custom"), caps))
     }
 }

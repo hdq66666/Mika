@@ -62,8 +62,17 @@ class SpeechResolverTest {
             SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.TtsOnly),
             SpeechResolver.resolve(choice, none, listOf(p1.copy(ttsModels = setOf(choice.model)))),
         )
+    }
+
+    @Test fun unmarkedModelCanUseTranscriptionRegardlessOfItsId() {
+        val model = "fishaudio/drama-3-int4"
+        val choice = SpeechChoice.Provider(p1.id, model, TranscribeMethod.AudioTranscriptions)
         assertEquals(
-            SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.TtsOnly),
+            SpeechEngineSpec.Provider(p1, model, TranscribeMethod.AudioTranscriptions),
+            SpeechResolver.resolve(choice, none, listOf(p1)),
+        )
+        assertEquals(
+            SpeechEngineSpec.Bailian("cosyvoice-v3-flash", BailianRegion.Beijing),
             SpeechResolver.resolve(SpeechChoice.Bailian("cosyvoice-v3-flash", BailianRegion.Beijing), none, emptyList()),
         )
     }

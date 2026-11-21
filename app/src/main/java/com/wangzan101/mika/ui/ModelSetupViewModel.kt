@@ -610,12 +610,11 @@ class ModelSetupViewModel(
     private suspend fun probeModel(
         kind: ProviderConfig.Kind, baseUrl: String, key: String?, sessionHeader: String?,
         model: String, endpoint: ModelEndpoint?, caps: Capabilities, exampleKind: ProviderConfig.Kind,
-        listed: ListedModel? = null,
         providerId: String = "",
     ): ProbeOutcome {
         val result = try {
             withContext(io) {
-                withTimeout(PROBE_TIMEOUT_MS) { store.probe(kind, baseUrl, key, sessionHeader, model, endpoint, caps, listed, providerId) }
+                withTimeout(PROBE_TIMEOUT_MS) { store.probe(kind, baseUrl, key, sessionHeader, model, endpoint, caps, providerId) }
             }
         } catch (e: TimeoutCancellationException) {
             return ProbeOutcome.Failed(tr(R.string.model_probe_timeout, model, (PROBE_TIMEOUT_MS / 1000).toInt()))
@@ -651,7 +650,6 @@ class ModelSetupViewModel(
         val example = ProviderPresets.forHost(fresh.baseUrl)?.kind ?: fresh.kind
         return probeModel(
             fresh.kind, fresh.baseUrl, store.providerKey(p.id), fresh.sessionHeader, model, listed?.endpoint, caps, example,
-            listed = listed,
             providerId = fresh.id,
         )
     }
@@ -844,6 +842,17 @@ class ModelSetupViewModel(
 
     fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
         val saved = store.setTtsModel(providerId, model, enabled)
+        sync()
+        return saved
+    }
+
+    /** 在服务商详情中明确改选用途，可撤销同一模型的 TTS 标记。 */
+    fun useFromProvider(role: ModelRole, providerId: String, model: String): Boolean {
+        val provider = store.provider(providerId) ?: return false
+        val unmarked = provider.copy(ttsModels = provider.ttsModels - model)
+        val caps = ModelOptions.ofProvider(unmarked, store.list()).firstOrNull { it.id == model }?.capabilities
+            ?: ModelOptions.baseOf(provider)
+        val saved = store.use(role, providerId, model, caps, reassignTts = true)
         sync()
         return saved
     }

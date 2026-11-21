@@ -94,11 +94,15 @@ class ModelSetupNetworkTest {
         assertNull(store.roles.value.main)
         assertTrue(vm.setTtsModel(saved.id, "opaque-model", true))
         runBlocking {
-            vm.pick(ModelRole.Main, saved.id, "vendor/chat")
+            vm.pick(ModelRole.Main, saved.id, "fishaudio/drama-3-int4")
             withTimeout(15_000) { vm.state.first { it.roles.main != null } }
         }
 
-        assertEquals("vendor/chat", store.configFor(ModelRole.Main)?.model)
+        assertEquals("fishaudio/drama-3-int4", store.configFor(ModelRole.Main)?.model)
+        assertTrue(vm.setTtsModel(saved.id, "fishaudio/drama-3-int4", true))
+        assertNull(store.configFor(ModelRole.Main))
+        assertTrue(vm.useFromProvider(ModelRole.Main, saved.id, "fishaudio/drama-3-int4"))
+        assertEquals("fishaudio/drama-3-int4", store.configFor(ModelRole.Main)?.model)
         assertEquals(setOf("opaque-model"), store.provider(saved.id)?.ttsModels)
         assertTrue(store.provider(saved.id)!!.verifiedModels.isEmpty())
         assertEquals(1, server.requestCount)

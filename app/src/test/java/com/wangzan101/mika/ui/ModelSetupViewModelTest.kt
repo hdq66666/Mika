@@ -84,26 +84,32 @@ class ModelSetupViewModelTest {
         listOf(ListedModel("deepseek-chat"), ListedModel("deepseek-reasoner"), ListedModel("deepseek-coder", toolCalls = false)),
     )
 
-    @Test fun manuallyEnteredTtsModelsCannotBeTestedForChatRolesOrFallbacks() = runTest {
+    @Test fun modelNamesDoNotRestrictExplicitRoleChangesOrTriggerNetworkRequests() = runTest {
         val store = store()
+        val id = "fishaudio/drama-3-int4"
         val provider = store.connect("Speech", ProviderConfig.Kind.OpenAiCompat, "https://tts.test/v1", null,
-            listOf(ListedModel("speech-alias", speechOnly = true), ListedModel("tts-mark")))
-        assertTrue(store.setTtsModel(provider.id, "tts-mark", true))
+            listOf(ListedModel(id, unsupportedApis = listOf("/v1/audio/speech"))))
         val vm = vm(store)
-        var picked = 0
-
-        for ((model, role) in listOf("tts-mark", "speech-alias", "fishaudio/drama-3-int4").zip(ModelRole.entries)) {
-            vm.pick(role, provider.id, model) { picked++ }
+        val choices = ModelRole.entries
+        for (role in choices) {
+            vm.pick(role, provider.id, id)
+            runCurrent()
+            assertEquals(id, store.configFor(role)?.model)
+        }
+        assertTrue(vm.setTtsModel(provider.id, id, true))
+        for (role in choices) {
+            vm.pick(role, provider.id, id)
             runCurrent()
             assertTrue(vm.state.value.manualPick[provider.id] is ListState.Failed)
-            vm.pickFallback(role, 0, provider.id, model) { picked++ }
+            vm.pickFallback(role, 0, provider.id, id)
             runCurrent()
             assertTrue(vm.state.value.manualPick[provider.id] is ListState.Failed)
         }
-
-        assertEquals(0, picked)
+        assertTrue(vm.useFromProvider(ModelRole.Main, provider.id, id))
+        assertEquals(id, store.configFor(ModelRole.Main)?.model)
+        assertTrue(store.provider(provider.id)!!.ttsModels.isEmpty())
         assertTrue(built.isEmpty())
-        assertTrue(store.roles.value.referenced.isEmpty())
+        assertTrue(probes.isEmpty())
     }
     private val localSpeechUrl = "http://192.168.2.231:8091/v1"
 

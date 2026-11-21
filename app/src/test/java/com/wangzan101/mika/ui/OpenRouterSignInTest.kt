@@ -140,7 +140,7 @@ class OpenRouterSignInTest {
         )
         val s = store(models)
         val existing = s.connectOpenRouter("old-key", models)
-        assertTrue(s.setTtsModel(existing.id, "vendor/opaque", enabled = true))
+        models.forEach { assertTrue(s.setTtsModel(existing.id, it.id, enabled = true)) }
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"key":"sk-or-v1-NEW"}"""))
         val vm = ModelSetupViewModel(s, scope, io = Dispatchers.IO, browser = Browser(), signIns = ChatGptSignIns(scope))
 

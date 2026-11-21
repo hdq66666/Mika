@@ -339,7 +339,7 @@ class ModelSetupScreenTest {
         val used = mutableListOf<String>()
         compose.setContent {
             MikaTheme {
-                ProviderDetailContent(connected(), deepseek, ProviderDetailActions(use = { role, m -> used += "$role $m" }), onBack = {})
+                ProviderDetailContent(connected(), deepseek, ProviderDetailActions(use = { role, m -> used.add("$role $m") }), onBack = {})
             }
         }
         compose.onNodeWithTag("model-deepseek-coder").performClick()
@@ -383,6 +383,30 @@ class ModelSetupScreenTest {
         tts.assertIsSelected().assertTextContains(ModelsCopy.IN_USE).performClick()
         compose.onNodeWithTag("use-as").assertDoesNotExist()
         assertEquals(setOf("deepseek-coder"), provider.ttsModels)
+    }
+
+    @Test fun soleMarkedModelCanBeAssignedBackToMainFromProviderDetails() {
+        val id = "fishaudio/drama-3-int4"
+        var provider by mutableStateOf(deepseek.copy(models = listOf(ListedModel(id)), ttsModels = setOf(id)))
+        var picked: ModelRole? by mutableStateOf(null)
+        compose.setContent {
+            MikaTheme {
+                ProviderDetailContent(
+                    connected().copy(providers = listOf(provider), configs = emptyList(), roles = RoleChoices()),
+                    provider, ProviderDetailActions(use = { role, model ->
+                        picked = role
+                        provider = provider.copy(ttsModels = provider.ttsModels - model)
+                        true
+                    }), onBack = {},
+                )
+            }
+        }
+        compose.onNodeWithTag("model-$id").performScrollTo().performClick()
+        compose.onNodeWithTag("model-use-tts").assertIsSelected()
+        compose.awaitOne(ModelsCopy.roleName(ModelRole.Main)).performClick()
+        compose.onNodeWithTag("use-as").assertDoesNotExist()
+        assertEquals(ModelRole.Main, picked)
+        assertTrue(provider.ttsModels.isEmpty())
     }
 
     @Test fun providerWithoutModelListCanMarkAManualTtsModel() {

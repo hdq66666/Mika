@@ -5,7 +5,6 @@ import android.os.Build
 import com.wangzan101.mika.settings.KeyCipher
 import java.util.Base64
 import com.wangzan101.mika.settings.KeystoreKeyCipher
-import com.wangzan101.mika.settings.ModelOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
@@ -108,7 +107,6 @@ class CallVoiceProfileStore internal constructor(
         val normalized = profile.copy(id = id, name = profile.name.trim(), endpoint = profile.endpoint.trim(),
             model = profile.model.trim(), speaker = profile.speaker.trim().ifBlank { if (profile.protocol == CallVoiceProtocol.OPENAI_REALTIME) OpenAiCallProtocol.VOICE else VolcRealtimeConfig.DEFAULT_SPEAKER })
         validate(normalized)
-        require(!ModelOptions.isTtsOnly(normalized.model)) { "实时模型名称无效" }
         require(stored.profiles.size < CallVoiceProfile.MAX_PROFILES || existing != null) { "最多保存 ${CallVoiceProfile.MAX_PROFILES} 套实时语音配置" }
         val serviceChanged = existing != null && (existing.protocol != normalized.protocol || existing.endpoint != normalized.endpoint || existing.model != normalized.model)
         val savedCredentials = credentials?.let {

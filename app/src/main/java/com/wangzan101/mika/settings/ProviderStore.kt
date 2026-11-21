@@ -81,6 +81,9 @@ import com.wangzan101.mika.core.net.NetProxy
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -572,17 +575,25 @@ class ProviderStore(
     }
 
     /**
-     * 把服务商 [providerId] 下的 [model] 用作 [role]:这个模型还没有配置就按 [caps] 建一条,再交给 [choose]。
-     * 服务商不存在时返回 false。
+     * 保存用户选定的模型用途。服务商详情允许同时撤销 TTS 标记，其他入口仍按现有标记过滤。
      */
     @Synchronized
-    fun use(role: ModelRole, providerId: String, model: String, caps: Capabilities): Boolean {
+    fun use(role: ModelRole, providerId: String, model: String, caps: Capabilities, reassignTts: Boolean = false): Boolean {
         val p = provider(providerId) ?: return false
         val name = model.trim()
-        if (!ModelOptions.canUseForChat(p, name)) return false
-        val id = _configs.value.firstOrNull { it.providerId == p.id && it.model == name }?.id
-            ?: newId().also { save(ProviderConfig(it, p.kind, p.baseUrl, name, caps, p.name, p.id), null) }
-        return choose(role, RoleChoice.Model(id))
+        if (name.isEmpty() || (!reassignTts && name in p.ttsModels)) return false
+        val provider = if (reassignTts) p.withTtsMark(name, false) else p
+        val providers = _providers.value.map { if (it.id == p.id) provider else it }
+        val existing = _configs.value.firstOrNull { it.providerId == p.id && it.model == name }
+        val config = existing ?: ProviderConfig(newId(), p.kind, p.baseUrl, name, caps, p.name, p.id)
+        val selected = if (role == ModelRole.Main) config.copy(capabilities = config.capabilities.copy(toolCalls = true)) else config
+        var roles = _roles.value.with(role, RoleChoice.Model(config.id)) ?: return false
+        roles.main?.let { roles = roles.copy(mainFallbacks = roles.mainFallbacks - it) }
+        val configs = if (existing == null) _configs.value + selected else _configs.value.map {
+            if (it.id == existing.id) selected else it
+        }
+        val referenced = roles.referenced
+        return saveRoleSelection(providers, configs.filter { it.id in referenced }, roles)
     }
 
     /**
@@ -740,21 +751,29 @@ class ProviderStore(
     fun setTtsModel(providerId: String, model: String, enabled: Boolean): Boolean {
         val p = provider(providerId) ?: return false
         val id = model.trim().takeIf { it.isNotEmpty() } ?: return false
-        val models = if (enabled) p.ttsModels + id else p.ttsModels - id
-        if (models == p.ttsModels) return true
-        val updated = _providers.value.map { if (it.id == providerId) it.copy(ttsModels = models) else it }
+        if ((id in p.ttsModels) == enabled) return true
+        val updated = _providers.value.map { if (it.id == providerId) p.withTtsMark(id, enabled) else it }
         val removedIds = if (enabled) _configs.value.filter { it.providerId == p.id && it.model.trim() == id }.mapTo(hashSetOf()) { it.id }
             else emptySet()
         val configs = _configs.value.filterNot { it.id in removedIds }
         val roles = if (removedIds.isEmpty()) _roles.value else _roles.value.keepOnly(configs.mapTo(hashSetOf()) { it.id })
+        return saveRoleSelection(updated, configs, roles)
+    }
+
+    private fun Provider.withTtsMark(model: String, enabled: Boolean): Provider = copy(
+        ttsModels = if (enabled) ttsModels + model else ttsModels - model,
+        typedModels = if (models.orEmpty().none { it.id == model }) typedModels + model else typedModels,
+    )
+
+    private fun saveRoleSelection(providers: List<Provider>, configs: List<ProviderConfig>, roles: RoleChoices): Boolean {
         try {
-            writeAtomically(configFile, configJson(updated, configs, roles))
-        } catch (_: Exception) {
+            writeAtomically(configFile, configJson(providers, configs, roles))
+        } catch (_: IOException) {
             return false
         }
-        _providers.value = updated
-        _roles.value = roles
+        _providers.value = providers
         _configs.value = configs
+        _roles.value = roles
         return true
     }
 
@@ -1065,17 +1084,17 @@ class ProviderStore(
     }
 
     /**
-     * 「测试并保存」的试调用:还没存下的服务商,按真实任务同一条路([modelFactory]、同样的请求头)建出 [model],
+     * 用户确认测试指定模型后，按真实任务的适配器和请求头建出 [model]，
      * 带一个无参数的工具([PROBE_TOOL])、请它调用;回复限得很短(协议允许的话,见 [buildModel])。
      * 回了工具调用为 [ProbeResult.ToolCalled],只回了话为 [ProbeResult.NoToolCall],请求失败带着服务端的报错原样返回。
      * 不计量:这几个 token 不属于任何用途。会话号用新的,不属于任何对话。超时由调用方管。
      */
     suspend fun probe(
         kind: ProviderConfig.Kind, baseUrl: String, apiKey: String?, sessionHeader: String?,
-        model: String, endpoint: ModelEndpoint?, caps: Capabilities, listed: ListedModel? = null,
+        model: String, endpoint: ModelEndpoint?, caps: Capabilities,
         providerId: String = "",
     ): ProbeResult {
-        if (ModelOptions.isTtsOnly(model, listed)) return ProbeResult.Failed(ModelError.ToolsUnsupported(model))
+        if (provider(providerId)?.let { ModelOptions.isTtsOnly(it, model) } == true) return ProbeResult.Failed(ModelError.ToolsUnsupported(model))
         val probeKey = apiKey?.let { KeyPoolManager.shared.parseKeys(it).firstOrNull() ?: it }
         val cfg = ProviderConfig(PROBE_ID, kind, baseUrl, model, caps.copy(toolCalls = true), providerId = providerId)
         val m = modelFactory(cfg, probeKey, endpoint, ClientSetup(headers(sessionHeader, ModelSession.fresh()), PROBE_MAX_TOKENS))
@@ -1506,7 +1525,6 @@ class ProviderStore(
                 },
                 unsupportedApis = m["unsupportedApis"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
                 protocols = m["protocols"]?.jsonArray?.mapNotNull { ModelProtocol.of(it.jsonPrimitive.content) }?.takeIf { it.isNotEmpty() },
-                speechOnly = (m["speechOnly"] as? JsonPrimitive)?.booleanOrNull == true,
             )
         },
     )
@@ -1606,7 +1624,6 @@ class ProviderStore(
                                         m.reasoningEfforts?.let { levels -> putJsonArray("reasoningEfforts") { levels.forEach { add(it) } } }
                                         m.thinkingTypes?.let { types -> putJsonArray("thinkingTypes") { types.forEach { add(it) } } }
                                         m.chat?.let { put("chat", it) }
-                                        if (m.speechOnly) put("speechOnly", true)
                                         m.endpoint?.let { e ->
                                             putJsonObject("api") {
                                                 put("protocol", e.protocol.wire); put("baseUrl", e.baseUrl)
@@ -1665,10 +1682,7 @@ class ProviderStore(
     private fun writeAtomically(f: File, text: String) {
         val tmp = File(f.parentFile, f.name + ".tmp")
         tmp.writeText(text)
-        if (!tmp.renameTo(f)) {
-            f.delete()
-            check(tmp.renameTo(f)) { "cannot write ${f.name}" }
-        }
+        Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 
     private fun encode(b: ByteArray) = Base64.getEncoder().encodeToString(b)

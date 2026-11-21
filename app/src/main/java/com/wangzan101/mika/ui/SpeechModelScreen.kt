@@ -178,13 +178,10 @@ fun SpeechModelScreen(store: ProviderStore, onBack: () -> Unit) {
                 },
                 onSaveBailian = { input ->
                     val usable = input.key.ifBlank { settings?.bailianKey(input.region).orEmpty() }
-                    when {
-                        ModelOptions.isTtsOnly(input.model) -> liveProbe = LiveProbeUi(error = tr(R.string.model_tts_only_not_supported))
-                        usable.isBlank() -> liveProbe = LiveProbeUi(error = tr(R.string.speech_live_auth))
-                        else -> probeThen(BailianProtocol(input.model, input.language), input.region.endpoint(input.workspace), mapOf("Authorization" to "Bearer $usable")) {
-                            checkNotNull(settings).saveBailian(input.key, SpeechChoice.Bailian(input.model, input.region, input.workspace, input.language))
-                            funAsrDone(); funAsrOpen = false
-                        }
+                    if (usable.isBlank()) liveProbe = LiveProbeUi(error = tr(R.string.speech_live_auth))
+                    else probeThen(BailianProtocol(input.model, input.language), input.region.endpoint(input.workspace), mapOf("Authorization" to "Bearer $usable")) {
+                        checkNotNull(settings).saveBailian(input.key, SpeechChoice.Bailian(input.model, input.region, input.workspace, input.language))
+                        funAsrDone(); funAsrOpen = false
                     }
                 },
                 onClearBailian = { region -> settings?.clearBailian(region); funAsrDone() },
@@ -292,9 +289,7 @@ private fun LiveRows(choice: SpeechChoice, doubao: Boolean, funAsr: Boolean, act
         )
         val using = when (choice) {
             is SpeechChoice.FunAsr -> funAsrTabName(FunAsrTab.Local) + " · " + FunAsrProtocol.hostOf(choice.url)
-            is SpeechChoice.Bailian -> choice.takeUnless { ModelOptions.isTtsOnly(it.model) }?.let {
-                funAsrTabName(FunAsrTab.of(it)) + " · " + it.model
-            }
+            is SpeechChoice.Bailian -> funAsrTabName(FunAsrTab.of(choice)) + " · " + choice.model
             else -> null
         }
         LiveServiceRow(

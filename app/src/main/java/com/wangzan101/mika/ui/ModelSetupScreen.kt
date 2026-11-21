@@ -214,7 +214,7 @@ fun ModelSetupScreen(
                     addKey = { vm.addProviderKey(p.id, it) },
                     removeKey = { vm.removeProviderKey(p.id, it) },
                     remove = { vm.removeProvider(p.id); openProvider = null; allModels = false },
-                    use = { r, model -> vm.pick(r, p.id, model) },
+                    use = { r, model -> vm.useFromProvider(r, p.id, model) },
                     setVision = { model, sees -> vm.setModelVision(p.id, model, sees) },
                     setTts = { model, enabled -> vm.setTtsModel(p.id, model, enabled) },
                     showAll = { allModels = true },

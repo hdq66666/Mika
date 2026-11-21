@@ -23,8 +23,6 @@ import com.wangzan101.mika.BuildConfig
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.calls.instructions.CallInstructionStore
-import com.wangzan101.mika.i18n.tr
-import com.wangzan101.mika.settings.ModelOptions
 import com.wangzan101.mika.shell.IMikaShell
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -496,7 +494,6 @@ class CallRuntime(private val app: MikaApp) {
     suspend fun selectVoiceProfile(id: String): CallActionResult = onMain {
         if (work != null || lockedDial != null) return@onMain fail("请先结束当前通话或锁屏拨出安排")
         val profile = voiceProfiles.get(id) ?: return@onMain fail("实时语音配置不存在")
-        if (ModelOptions.isTtsOnly(profile.model)) return@onMain fail(tr(R.string.model_tts_only_not_supported))
         settings.save(settings.state.value.copy(
             activeVoiceProfileId = profile.id,
             speaker = profile.speaker,
@@ -510,7 +507,6 @@ class CallRuntime(private val app: MikaApp) {
 
     suspend fun saveVoiceProfile(profile: CallVoiceProfile, credentials: VolcRealtimeCredentials? = null): CallActionResult = onMain {
         if (work != null || lockedDial != null) return@onMain fail("请先结束当前通话或锁屏拨出安排")
-        if (ModelOptions.isTtsOnly(profile.model)) return@onMain fail(tr(R.string.model_tts_only_not_supported))
         val previous = voiceProfiles.get(profile.id)
         val saved = withContext(Dispatchers.IO) { voiceProfiles.save(profile, credentials) }
         if (settings.state.value.activeVoiceProfileId == saved.id) {
@@ -537,7 +533,6 @@ class CallRuntime(private val app: MikaApp) {
     suspend fun testVoiceProfile(id: String): CallActionResult = onMain {
         if (work != null || lockedDial != null) return@onMain fail("请先结束当前通话或锁屏拨出安排")
         val profile = voiceProfiles.get(id) ?: return@onMain fail("实时语音配置不存在")
-        if (ModelOptions.isTtsOnly(profile.model)) return@onMain fail(tr(R.string.model_tts_only_not_supported))
         val credentials = voiceProfiles.credentials(id) ?: return@onMain fail("请先配置实时语音凭据")
         voiceProfiles.markConnectionTested(id, false)
         publish()

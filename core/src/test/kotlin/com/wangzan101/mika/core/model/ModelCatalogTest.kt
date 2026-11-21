@@ -176,22 +176,6 @@ class ModelCatalogTest {
         )
     }
 
-    @Test fun openAiCompatIdentifiesListedSpeechSynthesisWithoutGuessingFromAudioNames() = runTest {
-        server.enqueue(ok("""{"data":[
-            {"id":"voice-a","type":"tts"},
-            {"id":"voice-b","supported_endpoints":["/provider/v1/audio/speech"]},
-            {"id":"voice-c","architecture":{"modality":"text->audio"}},
-            {"id":"vendor/chat-tts","supported_endpoints":["/v1/audio/speech","/v1/chat/completions"]},
-            {"id":"mislabelled","type":"tts","supported_endpoints":["/v1/audio/speech","/v1/chat/completions"]},
-            {"id":"gemini-preview-tts","type":"tts","supported_endpoints":["/v1beta/models/gemini-preview-tts:generateContent"]},
-            {"id":"transcriber","architecture":{"modality":"audio->text"}}
-        ]}"""))
-
-        val list = models(catalog.openAiCompat(base, null))
-        assertEquals(listOf(true, true, true, false, false, true, false), list.map { it.speechOnly })
-        assertEquals(setOf("vendor/chat-tts", "mislabelled"), list.filter { it.hasDedicatedChatEndpoint }.map { it.id }.toSet())
-    }
-
     @Test fun chatGptModelListKeepsListedSlugsInServerOrder() = runTest {
         server.enqueue(ok("""{"models":[
             {"slug":"gpt-b","display_name":"GPT B","visibility":"list","input_modalities":["text","image"],

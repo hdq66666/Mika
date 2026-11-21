@@ -30,26 +30,27 @@ data class ModelOption(
 object ModelOptions {
     /**
      * 把列出的模型和预设能力合并。可当主模型的排前面,其余保持服务商给的顺序。
-     * 只写了 Mika 不会说的接口协议的模型(见 [ListedModel.usable])调用必然失败,不列出来。
+     * 用途选择器展示完整目录；默认推荐列表沿用服务商支持的协议。
      */
-    fun merge(listed: List<ListedModel>, base: Capabilities): List<ModelOption> = listed.filter { it.usable }.map { m ->
-        ModelOption(
-            id = m.id,
-            capabilities = base.copy(
-                toolCalls = m.toolCalls ?: base.toolCalls,
-                vision = m.vision ?: base.vision,
-                contextTokens = m.contextTokens ?: base.contextTokens,
-                reasoning = m.reasoning ?: base.reasoning,
-                // 看图定位准不准要实测过才算,新连的一律未验证
-                groundingVerified = false,
-            ),
-            toolCallsKnown = m.toolCalls != null,
-            visionKnown = m.vision != null,
-            contextKnown = m.contextTokens != null,
-            displayName = m.displayName,
-            chat = if (m.hasDedicatedChatEndpoint) true else m.chat,
-        )
-    }.sortedBy { if (it.canBeMain) 0 else 1 }
+    fun merge(listed: List<ListedModel>, base: Capabilities, includeUnsupported: Boolean = false): List<ModelOption> =
+        listed.filter { includeUnsupported || it.usable }.map { m ->
+            ModelOption(
+                id = m.id,
+                capabilities = base.copy(
+                    toolCalls = m.toolCalls ?: base.toolCalls,
+                    vision = m.vision ?: base.vision,
+                    contextTokens = m.contextTokens ?: base.contextTokens,
+                    reasoning = m.reasoning ?: base.reasoning,
+                    // 看图定位准不准要实测过才算,新连的一律未验证
+                    groundingVerified = false,
+                ),
+                toolCallsKnown = m.toolCalls != null,
+                visionKnown = m.vision != null,
+                contextKnown = m.contextTokens != null,
+                displayName = m.displayName,
+                chat = m.chat,
+            )
+        }.sortedBy { if (it.canBeMain) 0 else 1 }
 
     /**
      * 拿来当主模型、试调用的先后:只要可当主模型、又不像别的用途的(见 [looksNonChat]);
@@ -88,32 +89,17 @@ object ModelOptions {
         "embed", "rerank", "tts", "whisper", "transcribe", "speech", "audio", "realtime", "image", "dall", "moderation", "ocr", "asr",
     )
 
-    fun isTtsOnly(model: String, listed: ListedModel? = null): Boolean {
-        if (listed?.hasDedicatedChatEndpoint == true) return false
-        if (listed?.speechOnly == true) return true
-        if (listed?.chat == true) return false
-        if (listed?.unsupportedApis?.any(::isSpeechApi) == true && listed.protocols.isNullOrEmpty()) return true
-        val id = model.trim().lowercase()
-        val parts = id.split(MODEL_ID_SEPARATOR)
-        return "tts" in parts || "text-to-speech" in id || parts.any { it in TTS_FAMILIES } ||
-            id.startsWith("fishaudio/drama-") || id.startsWith("fish-audio/drama-")
-    }
-
-    fun isTtsOnly(provider: Provider, model: String): Boolean {
-        val id = model.trim()
-        return id in provider.ttsModels || isTtsOnly(id, provider.models?.firstOrNull { it.id == id })
-    }
+    /** 模型用途由用户在这家服务商上的选择决定。 */
+    fun isTtsOnly(provider: Provider, model: String): Boolean = model.trim() in provider.ttsModels
 
     fun canUseForChat(provider: Provider, model: String): Boolean =
         model.isNotBlank() && !isTtsOnly(provider, model)
 
     /** 只有已知 TTS 模型的服务商从其他用途隐藏。完全没有已知模型时仍可手填。 */
     fun mayHaveNonTtsModels(provider: Provider): Boolean {
-        val known = provider.models.orEmpty().associateBy { it.id }
-        val unlisted = (provider.typedModels + provider.verifiedModels) - known.keys
-        if (known.isEmpty() && unlisted.isEmpty() && provider.ttsModels.isEmpty()) return true
-        return known.values.any { it.id !in provider.ttsModels && !isTtsOnly(it.id, it) } ||
-            unlisted.any { it !in provider.ttsModels && !isTtsOnly(it) }
+        if (provider.ttsModels.isEmpty()) return true
+        return provider.models.orEmpty().any { it.id !in provider.ttsModels } ||
+            (provider.typedModels + provider.verifiedModels).any { it !in provider.ttsModels }
     }
 
     /** 上下文长度的短写:64K、1M。 */
@@ -140,9 +126,8 @@ object ModelOptions {
      * 用户说过能不能看图的([Provider.visionOverrides])按用户说的。
      */
     fun ofProvider(p: Provider, configs: List<ProviderConfig>, includeTts: Boolean = false): List<ModelOption> {
-        val catalog = p.models.orEmpty().associateBy { it.id }
         return listedOf(p, configs, includeTts).mapNotNull { o ->
-            val tts = o.id in p.ttsModels || isTtsOnly(o.id, catalog[o.id])
+            val tts = isTtsOnly(p, o.id)
             if (tts && !includeTts) return@mapNotNull null
             if (tts) return@mapNotNull o.copy(
                 capabilities = o.capabilities.copy(toolCalls = false, vision = false, reasoning = false),
@@ -157,7 +142,7 @@ object ModelOptions {
         val saved = configs.filter { it.providerId == p.id }
         val byModel = saved.associateBy { it.model }
         val base = baseOf(p)
-        val listed = merge(p.models.orEmpty(), base).map { o -> byModel[o.id]?.let { o.copy(capabilities = it.capabilities) } ?: o }
+        val listed = merge(p.models.orEmpty(), base, includeUnsupported = true).map { o -> byModel[o.id]?.let { o.copy(capabilities = it.capabilities) } ?: o }
         val rest = saved.filter { c -> listed.none { it.id == c.model } }.map {
             // 列不出模型的那家,模型都是手填的;有列表的,列表后来没了的那个不算手填
             val typed = it.model in p.typedModels || p.models?.isEmpty() == true
@@ -166,15 +151,12 @@ object ModelOptions {
         val options = listed + rest
         val knownIds = options.mapTo(mutableSetOf()) { it.id }
         val tts = if (includeTts) {
-            val catalog = p.models.orEmpty()
-            val speechOnly = catalog.filter { !it.usable && isTtsOnly(it.id, it) }
-            val voiceModels = (speechOnly.map { it.id } + p.ttsModels).filter(knownIds::add)
-            val titles = catalog.associate { it.id to it.displayName }
+            val voiceModels = p.ttsModels.filter(knownIds::add)
             val speechBase = base.copy(toolCalls = false, vision = false, reasoning = false)
             voiceModels.map {
                 ModelOption(it, speechBase,
                     toolCallsKnown = false, visionKnown = false, contextKnown = false,
-                    displayName = titles[it].orEmpty(), chat = false, typed = it in p.typedModels)
+                    chat = false, typed = it in p.typedModels)
             }
         } else emptyList()
         // 手填过、还没用在哪个用途上的(没有配置):照样列出来,能力按这家的初值
@@ -183,15 +165,6 @@ object ModelOptions {
         }
         return options + tts + typed
     }
-
-    private fun isSpeechApi(api: String): Boolean = api.trim().trimEnd('/').lowercase().let {
-        it == "audio/speech" || it.endsWith("/audio/speech") ||
-            it in SPEECH_APIS
-    }
-
-    private val SPEECH_APIS = setOf("speech", "audio-speech", "text-to-speech", "tts", TtsProtocol.OpenAiSpeech.wire, TtsProtocol.GeminiTts.wire)
-    private val MODEL_ID_SEPARATOR = Regex("[^a-z0-9]+")
-    private val TTS_FAMILIES = setOf("fishspeech", "indextts", "kokoro", "cosyvoice")
 }
 
 /**

@@ -341,7 +341,7 @@ class ProviderDetailActions(
     val removeKey: (String) -> Unit = {},
     val remove: () -> Unit = {},
     /** 把这家的一个模型用作某个用途(「用作」面板里点的)。 */
-    val use: (ModelRole, String) -> Unit = { _, _ -> },
+    val use: (ModelRole, String) -> Boolean = { _, _ -> false },
     /** 用户说这家的一个模型能不能看图(「用作」面板里的开关)。 */
     val setVision: (String, Boolean) -> Unit = { _, _ -> },
     /** 标记这家的一个模型，让它出现在声音模型选择页。 */
@@ -887,18 +887,16 @@ private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, actions: Pr
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 8.dp).testTag("use-as")) {
             Text(model, Modifier.padding(horizontal = 16.dp), style = ModelIdStyle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(ModelsCopy.useAsSubtitle(ModelsCopy.providerName(p)), Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 6.dp), style = MikaType.Caption, color = c.ink3)
-            if (option != null) {
-                ModelRole.entries.forEachIndexed { i, role ->
-                    val on = ui.picked(role, p.id, model)
-                    RadioRow(
-                        ModelsCopy.roleName(role), selected = on, first = i == 0,
-                        subtitle = if (on) ModelsCopy.IN_USE else ModelsCopy.roleWhat(role),
-                        onClick = { actions.use(role, model); onDismiss() },
-                    )
-                }
+            ModelRole.entries.forEachIndexed { i, role ->
+                val on = ui.picked(role, p.id, model)
+                RadioRow(
+                    ModelsCopy.roleName(role), selected = on, first = i == 0,
+                    subtitle = if (on) ModelsCopy.IN_USE else ModelsCopy.roleWhat(role),
+                    onClick = { if (actions.use(role, model)) onDismiss() else saveFailed = true },
+                )
             }
             RadioRow(
-                stringResource(R.string.role_tts), selected = tts, first = option == null,
+                stringResource(R.string.role_tts), selected = tts,
                 subtitle = if (tts) ModelsCopy.IN_USE else stringResource(R.string.role_tts_what),
                 modifier = Modifier.testTag("model-use-tts"),
                 onClick = {

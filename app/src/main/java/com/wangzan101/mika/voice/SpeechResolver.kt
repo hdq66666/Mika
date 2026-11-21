@@ -35,10 +35,7 @@ object SpeechResolver {
             else SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.DoubaoNotConfigured)
         is SpeechChoice.FunAsr -> SpeechEngineSpec.FunAsr(choice.url, choice.language)
         // 有没有存 Key 由 VoiceInput 开会话时再看(Key 不进选择),这里只按选择给
-        is SpeechChoice.Bailian -> {
-            if (ModelOptions.isTtsOnly(choice.model)) SpeechEngineSpec.Unavailable(SpeechEngineSpec.Why.TtsOnly)
-            else SpeechEngineSpec.Bailian(choice.model, choice.region, choice.workspace, choice.language)
-        }
+        is SpeechChoice.Bailian -> SpeechEngineSpec.Bailian(choice.model, choice.region, choice.workspace, choice.language)
         // 自带识别不响应时照实说、指去设置,不悄悄改用要花钱的服务商模型
         SpeechChoice.Auto -> when {
             system.usable -> SpeechEngineSpec.System(system.onDevice)

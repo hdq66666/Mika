@@ -294,24 +294,30 @@ class ProviderStoreTest {
         assertFalse(reopened.setTtsModel("missing", "m1", true))
     }
 
-    @Test fun chatRolesAndProbesRejectTtsWithoutBuildingAnAdapter() = runTest {
+    @Test fun soleTtsModelCanBeReassignedToMainOrSimplyUnmarked() = runTest {
         val s = store()
-        val models = listOf(ListedModel("voice-alias", speechOnly = true), ListedModel("shared-id"))
-        val p = s.connect("Speech", ProviderConfig.Kind.OpenAiCompat, "https://speech.test/v1", null, models)
-        assertTrue(s.setTtsModel(p.id, "shared-id", true))
-        for (model in listOf("voice-alias", "fishaudio/drama-3-int4", "shared-id")) {
-            for (role in ModelRole.entries) assertFalse(s.use(role, p.id, model, none))
-            assertNull(s.ensureConfigId(p.id, model, none))
-            val raw = cfg("blocked").copy(providerId = p.id, model = model)
-            s.save(raw, null)
-            assertFalse(s.choose(ModelRole.Main, RoleChoice.Model(raw.id)))
-            assertFalse(s.setMainFallback(0, raw.id))
-            assertNull(s.modelForConfig(raw.id))
-        }
-        val listed = models.first()
-        assertTrue(s.probe(p.kind, p.baseUrl, null, null, listed.id, null, none, listed) is ProbeResult.Failed)
+        val id = "fishaudio/drama-3-int4"
+        val p = s.connect("Local", ProviderConfig.Kind.OpenAiCompat, "https://local.test/v1", null, emptyList())
+        assertTrue(s.use(ModelRole.Main, p.id, id, none))
+        assertTrue(s.setTtsModel(p.id, id, true))
+        assertNull(s.configFor(ModelRole.Main))
+        assertFalse(s.use(ModelRole.Main, p.id, id, none))
+        assertTrue(s.probe(p.kind, p.baseUrl, null, null, id, null, none, providerId = p.id) is ProbeResult.Failed)
+        val blocked = File(tmp.root, "providers.json.tmp")
+        assertTrue(blocked.mkdir())
+        assertFalse(s.use(ModelRole.Main, p.id, id, none, reassignTts = true))
+        assertTrue(blocked.delete())
+        assertNull(s.configFor(ModelRole.Main))
+        assertEquals(setOf(id), s.provider(p.id)!!.ttsModels)
+        assertTrue(s.use(ModelRole.Main, p.id, id, none, reassignTts = true))
+        val reopened = store()
+        assertEquals(id, reopened.configFor(ModelRole.Main)?.model)
+        assertTrue(reopened.provider(p.id)!!.ttsModels.isEmpty())
+        assertTrue(reopened.setTtsModel(p.id, id, true))
+        assertTrue(reopened.setTtsModel(p.id, id, false))
+        assertNull(reopened.configFor(ModelRole.Main))
+        assertTrue(id in reopened.provider(p.id)!!.typedModels)
         assertTrue(built.isEmpty())
-        assertEquals(true, store().provider(p.id)?.models?.firstOrNull { it.id == listed.id }?.speechOnly)
     }
 
     @Test fun olderSettingsWithTheSameModelInVoiceAndChatAreRepairedOnStartup() {

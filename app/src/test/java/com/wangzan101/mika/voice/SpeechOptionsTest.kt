@@ -37,7 +37,7 @@ class SpeechOptionsTest {
         assertTrue(g.models.isEmpty())
     }
 
-    @Test fun speechSynthesisModelsAreFilteredWithoutLosingCustomTranscription() {
+    @Test fun userMarkedSynthesisModelsAreFilteredWithoutLosingCustomTranscription() {
         val mixed = openAi.copy(
             models = openAi.models.orEmpty() + ListedModel("speech-local") + ListedModel("speech-tts"),
             ttsModels = setOf("speech-local"),
@@ -45,7 +45,7 @@ class SpeechOptionsTest {
         val ttsOnly = openAi.copy(id = "speech-out", models = listOf(ListedModel("speech-local")), ttsModels = setOf("speech-local"))
         val groups = SpeechOptions.groups(listOf(mixed, ttsOnly))
         assertEquals(listOf("p1"), groups.map { it.provider.id })
-        assertEquals(listOf("whisper-1"), groups.single().models)
+        assertEquals(listOf("whisper-1", "speech-tts"), groups.single().models)
 
         val unavailable = SpeechChoice.Provider(ttsOnly.id, "speech-local", TranscribeMethod.AudioTranscriptions)
         assertEquals("未设置", SpeechOptions.summary(unavailable, SystemCapability(false, false), listOf(ttsOnly)).title)
