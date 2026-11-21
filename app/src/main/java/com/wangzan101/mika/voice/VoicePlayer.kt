@@ -127,10 +127,12 @@ class VoicePlayer(private val context: Context) {
                 is StreamEvent.Pcm -> {
                     val part = event.part
                     val current = pcmTrack
-                    if (event.index != playingIndex && current != null &&
-                        (current.sampleRate != part.sampleRate || current.channels != part.channels)
-                    ) {
-                        drainPcm(VoicePlayback.Loading)
+                    if (event.index != playingIndex && current != null) {
+                        if (current.sampleRate == part.sampleRate && current.channels == part.channels) {
+                            current.writeSilence(SEGMENT_PAUSE_MS)
+                        } else {
+                            drainPcm(VoicePlayback.Loading)
+                        }
                     }
                     playPcmChunk(part) { if (event.index == 0) onStarted() }
                     playingIndex = event.index
@@ -318,5 +320,6 @@ class VoicePlayer(private val context: Context) {
     private companion object {
         // 每块最多 8 KiB，44.1 kHz 单声道大约可预读 2.2 秒。
         const val PCM_LOOKAHEAD_CHUNKS = 24
+        const val SEGMENT_PAUSE_MS = 90
     }
 }

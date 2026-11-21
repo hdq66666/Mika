@@ -95,6 +95,11 @@ internal class PcmAudioTrack(
         }
     }
 
+    suspend fun writeSilence(durationMillis: Int) {
+        val frames = sampleRate * durationMillis / 1_000
+        write(ByteArray(frames * frameBytes))
+    }
+
     suspend fun drain() = withContext(Dispatchers.IO) {
         val finalFrame = framesWritten
         var lastPosition = 0L
