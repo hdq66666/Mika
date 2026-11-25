@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">پکن</string>
     <string name="voice_region_singapore">سنگاپور</string>
     <string name="voice_compat_lead">برای سرویس‌هایی که API صوتی OpenAI را پشتیبانی می‌کنند. مدل‌های موردنظر را پر کنید و بقیه را خالی بگذارید.</string>
-    <string name="voice_compat_models">مدل‌ها</string>
     <string name="voice_compat_models_note">اگر سرویس مدلی را ارائه نمی‌دهد، آن را خالی بگذارید.</string>
     <string name="voice_selfhosted_lead">یک سرور تشخیص جریانی در شبکه خودتان. نشانی آن را وارد کنید؛ حساب لازم نیست.</string>
     <string name="voice_field_api_key">کلید API</string>

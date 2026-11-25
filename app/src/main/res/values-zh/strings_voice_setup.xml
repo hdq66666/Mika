@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">北京</string>
     <string name="voice_region_singapore">新加坡</string>
     <string name="voice_compat_lead">给支持 OpenAI 语音接口的服务用。填你要用的模型，其余留空。</string>
-    <string name="voice_compat_models">模型</string>
     <string name="voice_compat_models_note">服务不提供的就留空。</string>
     <string name="voice_selfhosted_lead">部署在你自己网络里的流式识别服务。填地址即可，不需要账号。</string>
     <string name="voice_field_api_key">API Key</string>

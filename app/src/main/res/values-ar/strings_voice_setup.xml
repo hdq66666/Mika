@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">بكين</string>
     <string name="voice_region_singapore">سنغافورة</string>
     <string name="voice_compat_lead">للخدمات التي تدعم واجهات OpenAI الصوتية. املأ النماذج التي تريدها واترك الباقي فارغًا.</string>
-    <string name="voice_compat_models">النماذج</string>
     <string name="voice_compat_models_note">اترك النموذج فارغًا إذا كانت الخدمة لا توفره.</string>
     <string name="voice_selfhosted_lead">خادم تعرّف متدفق على شبكتك الخاصة. أدخل عنوانه؛ لا حاجة إلى حساب.</string>
     <string name="voice_field_api_key">مفتاح API</string>

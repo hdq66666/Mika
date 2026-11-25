@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">Pequim</string>
     <string name="voice_region_singapore">Singapura</string>
     <string name="voice_compat_lead">Para serviços compatíveis com as APIs de áudio da OpenAI. Preencha os modelos que quiser e deixe os outros em branco.</string>
-    <string name="voice_compat_models">Modelos</string>
     <string name="voice_compat_models_note">Deixe em branco os modelos que o serviço não oferece.</string>
     <string name="voice_selfhosted_lead">Um servidor de reconhecimento em streaming na sua própria rede. Informe o endereço; não precisa de conta.</string>
     <string name="voice_field_api_key">Chave de API</string>

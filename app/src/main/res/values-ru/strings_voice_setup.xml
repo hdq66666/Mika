@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">Пекин</string>
     <string name="voice_region_singapore">Сингапур</string>
     <string name="voice_compat_lead">Для сервисов с аудио-API, совместимыми с OpenAI. Укажите нужные модели, остальные оставьте пустыми.</string>
-    <string name="voice_compat_models">Модели</string>
     <string name="voice_compat_models_note">Оставьте поле пустым, если сервис не предлагает эту модель.</string>
     <string name="voice_selfhosted_lead">Сервер потокового распознавания в вашей сети. Укажите его адрес; аккаунт не нужен.</string>
     <string name="voice_field_api_key">API-ключ</string>

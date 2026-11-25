@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">Pekin</string>
     <string name="voice_region_singapore">Singapur</string>
     <string name="voice_compat_lead">OpenAI ses API\'lerini destekleyen hizmetler için. İstediğiniz modelleri doldurun, diğerlerini boş bırakın.</string>
-    <string name="voice_compat_models">Modeller</string>
     <string name="voice_compat_models_note">Hizmetin sunmadığı modeli boş bırakın.</string>
     <string name="voice_selfhosted_lead">Kendi ağınızdaki akışlı tanıma sunucusu. Adresini girin; hesap gerekmez.</string>
     <string name="voice_field_api_key">API anahtarı</string>

@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">베이징</string>
     <string name="voice_region_singapore">싱가포르</string>
     <string name="voice_compat_lead">OpenAI 오디오 API를 지원하는 서비스용입니다. 사용할 모델만 입력하고 나머지는 비워 두세요.</string>
-    <string name="voice_compat_models">모델</string>
     <string name="voice_compat_models_note">서비스가 제공하지 않는 모델은 비워 두세요.</string>
     <string name="voice_selfhosted_lead">내 네트워크에 있는 스트리밍 인식 서버입니다. 주소만 입력하면 되고 계정은 필요 없습니다.</string>
     <string name="voice_field_api_key">API 키</string>

@@ -245,7 +245,7 @@ private fun MigratedVoiceModelContent(
             VoiceOptionList(
                 choices, selection, tr(R.string.voice_try_tts), voiceVm,
                 onPick = { choice ->
-                    tts.select(voiceVm.ensureInCatalog(choice))
+                    selectReadAloud(voiceModels, settings, voiceVm.ensureInCatalog(choice))
                     test = null
                 },
                 onTest = { choice -> voiceVm.tryChoice(choice, tr(R.string.voice_try_sample)) },

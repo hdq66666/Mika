@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.settings.Provider
 import com.wangzan101.mika.settings.ProviderStore
+import com.wangzan101.mika.settings.VoiceSettings
 import com.wangzan101.mika.ui.components.ActionSheet
 import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.ButtonSize
@@ -97,6 +98,17 @@ internal fun rememberVoiceCatalogViewModel(voiceModels: VoiceModelEnvironment): 
     }
     DisposableEffect(viewModel) { onDispose { player.stop() } }
     return viewModel
+}
+
+/**
+ * 换一个朗读模型。音色跟着回到新模型自己的默认:上一个模型的音色名对新模型多半不存在,带过去只会合成失败。
+ * 电话里选朗读模型也是这样(见 [com.wangzan101.mika.voice.model.VoiceCatalogStore.setPhoneVoice] 的调用处)。
+ * 重选当前这个模型不动音色。旧设置还没迁进目录时(迁移没成功)也不动:那时朗读用的还是旧选择里记的音色,
+ * 这里的选择对它不起作用。
+ */
+internal fun selectReadAloud(voiceModels: VoiceModelEnvironment, settings: VoiceSettings, ref: VoiceModelRef) {
+    if (voiceModels.tts.migrated && voiceModels.tts.current() != ref) settings.setVoice("")
+    voiceModels.tts.select(ref)
 }
 
 /** Writes a chat-account offer into the catalog the first time it is picked or tested. */

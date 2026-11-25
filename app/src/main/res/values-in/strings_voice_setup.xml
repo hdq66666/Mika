@@ -59,7 +59,6 @@
     <string name="voice_region_beijing">Beijing</string>
     <string name="voice_region_singapore">Singapura</string>
     <string name="voice_compat_lead">Untuk layanan yang mendukung API audio OpenAI. Isi model yang Anda inginkan; biarkan yang lain kosong.</string>
-    <string name="voice_compat_models">Model</string>
     <string name="voice_compat_models_note">Biarkan kosong jika layanan tidak menyediakan model itu.</string>
     <string name="voice_selfhosted_lead">Server pengenalan streaming di jaringan Anda sendiri. Masukkan alamatnya; tidak perlu akun.</string>
     <string name="voice_field_api_key">Kunci API</string>

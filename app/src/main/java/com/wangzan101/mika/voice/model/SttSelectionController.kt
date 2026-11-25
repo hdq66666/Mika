@@ -49,10 +49,12 @@ class SttSelectionController(private val environment: VoiceModelEnvironment) {
     fun start(context: Context, ref: VoiceModelRef, language: String?, hooks: SttHooks): SpeechSession {
         val model = requireModel(ref)
         val binding = model.model.stt ?: throw VoiceModelError.Unsupported(VoiceCapability.STT)
-        val configuredLanguage = binding.language.takeIf {
-            it.isNotBlank() && binding.protocol in EXPLICIT_ASR_LANGUAGE_PROTOCOLS
-        }
-        return environment.registry.stt(model).start(context, model, configuredLanguage ?: language, hooks)
+        // 自建流式识别的语言是这个服务自己的设置(接入时在表单里选),不跟界面语言走:没选就是「自动」,
+        // 不指定语言、由服务自己判断(空串往下传就是不指定)。
+        // 另一种流式识别还没有选语言的地方:设过的(旧设置迁移来的)用设的,没设的照旧用调用方给的语言。
+        val configured = binding.language.takeIf { it.isNotBlank() && binding.protocol in EXPLICIT_ASR_LANGUAGE_PROTOCOLS }
+        val spoken = if (binding.protocol == SttProtocol.FunAsrStreaming) binding.language else configured ?: language
+        return environment.registry.stt(model).start(context, model, spoken, hooks)
     }
 
     /** Only batch protocols can transcribe an existing file; system and streaming selections return null. */
