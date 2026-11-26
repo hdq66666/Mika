@@ -65,8 +65,6 @@ data class VoiceSettingsState(
     /** 每次保存前是否问用户;默认问。 */
     val askBeforeSave: Boolean = true,
     val maxCharsPerSpeak: Int = DEFAULT_MAX_CHARS,
-    /** 本地/系统 TTS 引擎包名;为空时使用系统默认引擎。 */
-    val ttsEngine: String = "",
 ) {
     companion object {
         const val DEFAULT_MAX_CHARS = 2000
@@ -113,8 +111,6 @@ class VoiceSettings(private val prefs: SharedPreferences) {
     }
 
     fun setVoice(voice: String) = update { copy(voice = voice, choice = choice?.copy(voice = voice)) }
-
-    fun setTtsEngine(engine: String) = update { copy(ttsEngine = engine, voice = "") }
 
     fun setSpeed(speed: Float) = update {
         val normalized = normalizeVoiceSpeed(speed)
@@ -181,7 +177,6 @@ class VoiceSettings(private val prefs: SharedPreferences) {
         put("voice", state.voice)
         put("speed", state.speed)
         put("streaming", state.streaming)
-        put("ttsEngine", state.ttsEngine)
         state.choice?.let { c ->
             put("providerId", c.providerId)
             put("model", c.model)
@@ -197,7 +192,6 @@ class VoiceSettings(private val prefs: SharedPreferences) {
         val voice = (obj["voice"] as? JsonPrimitive)?.contentOrNull.orEmpty()
         val speed = normalizeVoiceSpeed((obj["speed"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull() ?: 1f)
         val streaming = bool("streaming", false)
-        val ttsEngine = (obj["ttsEngine"] as? JsonPrimitive)?.contentOrNull.orEmpty()
         val choice = if (providerId.isNullOrBlank() || model.isNullOrBlank() || protocol == null) null
         else VoiceChoice(
             providerId = providerId,
@@ -219,7 +213,6 @@ class VoiceSettings(private val prefs: SharedPreferences) {
             askBeforeSave = bool("askBeforeSave", true),
             maxCharsPerSpeak = ((obj["maxCharsPerSpeak"] as? JsonPrimitive)?.intOrNull ?: VoiceSettingsState.DEFAULT_MAX_CHARS)
                 .coerceIn(1, VoiceSettingsState.MAX_CHARS_LIMIT),
-            ttsEngine = ttsEngine,
         )
     }
 

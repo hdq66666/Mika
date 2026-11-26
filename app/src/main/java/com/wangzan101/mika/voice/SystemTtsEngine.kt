@@ -1,18 +1,13 @@
 package com.wangzan101.mika.voice
 
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
+
+/** 按名字设音色的结果:用上了、这个引擎没有这个音色(或音色数据没装)、引擎出错。 */
+enum class SystemVoiceResult { Applied, NotOffered, Failed }
 
 /**
  * 系统 [TextToSpeech] 的一次性门面。每个合成操作新建一个引擎、用完即 [shutdown]，
@@ -28,8 +23,8 @@ interface SystemTtsEngine {
 
     fun setSpeechRate(rate: Float): Int
 
-    /** 设置特定音色;成功返回 TextToSpeech.SUCCESS。默认空实现以兼容测试。 */
-    fun setVoice(voiceName: String): Int = TextToSpeech.SUCCESS
+    /** 按 [android.speech.tts.Voice.getName] 设音色。 */
+    fun setVoice(voiceName: String): SystemVoiceResult
 
     /** 注册合成进度回调;[onError] 只带 utteranceId,错误码由真实引擎自行归一。 */
     fun setOnUtteranceProgressListener(onDone: (utteranceId: String) -> Unit, onError: (utteranceId: String) -> Unit)
@@ -42,7 +37,11 @@ interface SystemTtsEngine {
     fun shutdown()
 }
 
-/** 真实实现:每个实例持有自己的 [TextToSpeech],调用方保证一次合成用完即关。 */
+/**
+ * 真实实现:每个实例持有自己的 [TextToSpeech],调用方保证一次合成用完即关。
+ * [enginePackage] 为空用手机的默认引擎;指定的引擎没装时 [TextToSpeech] 自己会连默认引擎,
+ * 连上了却初始化失败时这里再退回默认引擎试一次。
+ */
 class AndroidSystemTtsEngine(
     context: Context,
     private val enginePackage: String? = null,
@@ -51,39 +50,32 @@ class AndroidSystemTtsEngine(
     private var tts: TextToSpeech? = null
 
     override fun init(onInit: (status: Int) -> Unit) {
-        val listener = TextToSpeech.OnInitListener { status ->
+        val engine = enginePackage?.takeIf { it.isNotBlank() }
+        if (engine == null) {
+            tts = TextToSpeech(context) { status -> onInit(status) }
+            return
+        }
+        tts = TextToSpeech(context, { status ->
             if (status == TextToSpeech.SUCCESS) {
                 onInit(status)
-            } else if (!enginePackage.isNullOrBlank()) {
-                // 如果指定的第三方引擎初始化失败，自动回退到系统默认 TTS 引擎
-                runCatching { tts?.shutdown() }
-                tts = TextToSpeech(context) { fallbackStatus -> onInit(fallbackStatus) }
             } else {
-                onInit(status)
+                runCatching { tts?.shutdown() }
+                tts = TextToSpeech(context) { fallback -> onInit(fallback) }
             }
-        }
-        tts = if (!enginePackage.isNullOrBlank()) {
-            TextToSpeech(context, listener, enginePackage)
-        } else {
-            TextToSpeech(context, listener)
-        }
+        }, engine)
     }
 
     override fun setLanguage(locale: Locale): Int = tts?.setLanguage(locale) ?: TextToSpeech.ERROR
 
-    override fun setVoice(voiceName: String): Int {
-        if (voiceName.isBlank()) return TextToSpeech.SUCCESS
-        val t = tts ?: return TextToSpeech.ERROR
+    override fun setVoice(voiceName: String): SystemVoiceResult {
+        val t = tts ?: return SystemVoiceResult.Failed
         return try {
-            val matched = t.voices?.firstOrNull { it.name == voiceName }
-            if (matched != null) {
-                t.voice = matched
-                TextToSpeech.SUCCESS
-            } else {
-                TextToSpeech.LANG_NOT_SUPPORTED
-            }
-        } catch (_: Throwable) {
-            TextToSpeech.ERROR
+            val voice = t.voices?.firstOrNull { it.name == voiceName && !it.notInstalled() }
+                ?: return SystemVoiceResult.NotOffered
+            if (t.setVoice(voice) == TextToSpeech.SUCCESS) SystemVoiceResult.Applied else SystemVoiceResult.Failed
+        } catch (e: RuntimeException) {
+            // 引擎进程死掉时 getVoices/setVoice 可能直接抛
+            SystemVoiceResult.Failed
         }
     }
 
@@ -111,82 +103,6 @@ class AndroidSystemTtsEngine(
     }
 }
 
-data class SystemTtsEngineInfo(
-    val packageName: String,
-    val label: String,
-    val isDefault: Boolean = false,
-)
-
-data class SystemTtsVoiceInfo(
-    val name: String,
-    val locale: Locale? = null,
-    val displayName: String = name,
-)
-
-object SystemTtsDiscovery {
-    fun getInstalledEngines(context: Context): List<SystemTtsEngineInfo> {
-        val pm = context.packageManager
-        val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
-        val resolveInfos = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentServices(intent, PackageManager.ResolveInfoFlags.of(0))
-            } else {
-                @Suppress("DEPRECATION")
-                pm.queryIntentServices(intent, 0)
-            }
-        } catch (_: Throwable) {
-            emptyList()
-        }
-
-        val defaultPkg = try {
-            Settings.Secure.getString(context.contentResolver, "tts_default_synth")
-        } catch (_: Throwable) {
-            null
-        }
-
-        val engines = resolveInfos.mapNotNull { ri ->
-            val pkg = ri.serviceInfo?.packageName ?: return@mapNotNull null
-            val label = runCatching { ri.loadLabel(pm).toString() }.getOrNull()?.ifBlank { pkg } ?: pkg
-            SystemTtsEngineInfo(packageName = pkg, label = label, isDefault = pkg == defaultPkg)
-        }.distinctBy { it.packageName }
-
-        return engines.sortedWith(compareByDescending<SystemTtsEngineInfo> { it.isDefault }.thenBy { it.label })
-    }
-
-    suspend fun queryVoices(context: Context, enginePackage: String? = null): List<SystemTtsVoiceInfo> =
-        withContext(Dispatchers.IO) {
-            val ready = CompletableDeferred<List<SystemTtsVoiceInfo>>()
-            var tts: TextToSpeech? = null
-            try {
-                val listener = TextToSpeech.OnInitListener { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        val voices = runCatching {
-                            tts?.voices?.map { v ->
-                                val label = buildString {
-                                    val lang = v.locale?.displayName?.ifBlank { null }
-                                    if (lang != null) append(lang).append(" (").append(v.name).append(")")
-                                    else append(v.name)
-                                }
-                                SystemTtsVoiceInfo(name = v.name, locale = v.locale, displayName = label)
-                            }?.sortedBy { it.displayName } ?: emptyList()
-                        }.getOrDefault(emptyList())
-                        ready.complete(voices)
-                    } else {
-                        ready.complete(emptyList())
-                    }
-                }
-                tts = if (!enginePackage.isNullOrBlank()) {
-                    TextToSpeech(context.applicationContext, listener, enginePackage)
-                } else {
-                    TextToSpeech(context.applicationContext, listener)
-                }
-
-                withTimeoutOrNull(2500) { ready.await() } ?: emptyList()
-            } catch (_: Throwable) {
-                emptyList()
-            } finally {
-                runCatching { tts?.shutdown() }
-            }
-        }
-}
-
+/** 引擎说这个音色的数据还没下载到手机上。 */
+internal fun android.speech.tts.Voice.notInstalled(): Boolean =
+    features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true
