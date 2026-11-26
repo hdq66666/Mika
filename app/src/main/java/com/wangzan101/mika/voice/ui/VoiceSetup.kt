@@ -103,12 +103,15 @@ internal fun rememberVoiceCatalogViewModel(voiceModels: VoiceModelEnvironment): 
 /**
  * 换一个朗读模型。音色跟着回到新模型自己的默认:上一个模型的音色名对新模型多半不存在,带过去只会合成失败。
  * 电话里选朗读模型也是这样(见 [com.wangzan101.mika.voice.model.VoiceCatalogStore.setPhoneVoice] 的调用处)。
+ * 先写模型、写成了才清音色(和换系统朗读引擎的 [chooseSystemTtsEngine] 同一个顺序)。
  * 重选当前这个模型不动音色。旧设置还没迁进目录时(迁移没成功)也不动:那时朗读用的还是旧选择里记的音色,
  * 这里的选择对它不起作用。
  */
 internal fun selectReadAloud(voiceModels: VoiceModelEnvironment, settings: VoiceSettings, ref: VoiceModelRef) {
-    if (voiceModels.tts.migrated && voiceModels.tts.current() != ref) settings.setVoice("")
+    val switching = voiceModels.tts.migrated && voiceModels.tts.current() != ref
+    // 先换模型,写成了才清音色:目录写失败(抛出)时模型和音色都保持原样
     voiceModels.tts.select(ref)
+    if (switching) settings.setVoice("")
 }
 
 /** Writes a chat-account offer into the catalog the first time it is picked or tested. */

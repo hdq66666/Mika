@@ -5,6 +5,7 @@ import com.wangzan101.mika.settings.KeyCipher
 import com.wangzan101.mika.voice.BailianRegion
 import com.wangzan101.mika.voice.DoubaoProtocol
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -101,6 +102,24 @@ class VoicePresetsTest {
             }
             assertEquals(address, "Address must start with http:// or https://", error.detail)
         }
+    }
+
+    @Test fun `openai compatible refuses a query, fragment or user info instead of guessing what they mean`() {
+        listOf("https://h/v1?key=k", "https://h/v1#x", "https://user:pw@h/v1", "http://u@192.168.1.5:8000").forEach { address ->
+            val error = assertThrows(address, VoiceModelError.IncompleteConfig::class.java) {
+                VoicePresets.plan(VoicePreset.OpenAiCompatible("", address, "k", sttModel = "m"))
+            }
+            assertEquals(address, "Address must not contain a query, fragment or user info", error.detail)
+            assertFalse(address, error.detail.contains("pw") || error.detail.contains("key=k"))
+        }
+    }
+
+    @Test fun `an explicit default port names the same service as no port`() {
+        val plain = VoicePresets.plan(VoicePreset.OpenAiCompatible("", "https://api.example.com/v1", "k", ttsModel = "s"))
+        val explicit = VoicePresets.plan(VoicePreset.OpenAiCompatible("", "https://api.example.com:443/v1", "k", ttsModel = "s"))
+        val http = VoicePresets.plan(VoicePreset.OpenAiCompatible("", "http://192.168.1.5:80", "k", ttsModel = "s"))
+        assertEquals(plain.service, explicit.service)
+        assertEquals("compat:192.168.1.5", http.service.id)
     }
 
     @Test fun `an openai compatible address with a path saves, and its key reads back`() {

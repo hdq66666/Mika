@@ -52,4 +52,33 @@ class ReadAloudSelectionTest {
 
         assertEquals("mine", settings.state.value.voice)
     }
+
+    @Test fun `a failed catalog write keeps the old model and its voice`() {
+        val backend = object : com.wangzan101.mika.voice.model.VoiceCatalogBackend {
+            var value: String? = null
+            var fail = false
+            override fun read(): String? = value
+            override fun write(value: String): Boolean {
+                if (fail) return false
+                this.value = value
+                return true
+            }
+        }
+        val store = VoiceCatalogStore(backend, migrated = true).apply {
+            upsertService(VoiceService("a", "A", VoiceAccount.None))
+            upsertService(VoiceService("b", "B", VoiceAccount.None))
+            upsertModel(VoiceModel("a", "m", "M", tts = TtsBinding(TtsProtocol.OpenAiSpeech, endpoint = "http://a/v1")))
+            upsertModel(VoiceModel("b", "m", "M", tts = TtsBinding(TtsProtocol.OpenAiSpeech, endpoint = "http://b/v1")))
+        }
+        val env = voiceTestEnvironment(store)
+        selectReadAloud(env, settings, a)
+        settings.setVoice("alloy")
+        backend.fail = true
+
+        val error = runCatching { selectReadAloud(env, settings, b) }.exceptionOrNull()
+
+        org.junit.Assert.assertTrue(error is IllegalStateException)
+        assertEquals(a, store.state.value.selections.tts)
+        assertEquals("alloy", settings.state.value.voice)
+    }
 }

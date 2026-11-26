@@ -150,6 +150,10 @@ object VoicePresets {
         val uri = runCatching { URI(base) }.getOrNull()
             ?.takeIf { it.scheme?.lowercase() in HTTP_SCHEMES && !it.host.isNullOrBlank() }
             ?: throw VoiceModelError.IncompleteConfig("Address must start with http:// or https://")
+        // query、fragment、账号密码不知道服务想拿它们做什么,不猜,一律不收
+        if (uri.rawQuery != null || uri.rawFragment != null || uri.rawUserInfo != null) {
+            throw VoiceModelError.IncompleteConfig("Address must not contain a query, fragment or user info")
+        }
         val key = p.apiKey.trim().ifEmpty { throw VoiceModelError.IncompleteConfig("Enter the API key") }
         // 同一台机器上不同端口是不同的服务(各存各的,后存的不顶掉先存的);没写端口、或写的就是默认端口的,编号和以前一样
         val defaultPort = if (uri.scheme.equals("https", ignoreCase = true)) 443 else 80
