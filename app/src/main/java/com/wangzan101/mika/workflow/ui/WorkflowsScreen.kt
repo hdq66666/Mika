@@ -1,6 +1,7 @@
 package com.wangzan101.mika.workflow.ui
 
 import androidx.activity.compose.BackHandler
+import com.wangzan101.mika.core.run.PauseFlag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -93,6 +94,7 @@ internal fun WorkflowsScreen(runtime: WorkflowRuntime, onBack: () -> Unit, onOpe
                         if (current.problem.isNotBlank()) FooterNote(when (current.problem) {
                             "interrupted" -> stringResource(R.string.workflow_interrupted)
                             "start_failed" -> stringResource(R.string.workflow_start_failed)
+                            PauseFlag.REASON -> stringResource(R.string.workflow_stopped_paused)
                             "result_too_long" -> stringResource(R.string.workflow_result_too_long)
                             else -> current.problem
                         }, color = MikaTheme.colors.bad)
@@ -207,15 +209,15 @@ internal fun WorkflowsScreen(runtime: WorkflowRuntime, onBack: () -> Unit, onOpe
     fun change(next: List<WorkflowStep>) { encoded = Json.encodeToString(next); error = null }
     BackHandler { if (!busy) onBack() }
     PageScaffold(stringResource(R.string.workflow_edit), { if (!busy) onBack() }) {
-        OutlinedTextField(title, { title = it; error = null }, label = { Text(stringResource(R.string.recommendations_title_label)) }, singleLine = true,
+        MikaTextField(title, { title = it; error = null }, label = { Text(stringResource(R.string.recommendations_title_label)) }, singleLine = true,
             enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("workflow-title"))
         steps.forEachIndexed { index, step ->
             key(step.id) {
                 GroupLabel(stringResource(R.string.workflow_step_number, index + 1))
-                OutlinedTextField(step.title, { value -> change(steps.map { if (it.id == step.id) it.copy(title = value) else it }) },
+                MikaTextField(step.title, { value -> change(steps.map { if (it.id == step.id) it.copy(title = value) else it }) },
                     label = { Text(stringResource(R.string.workflow_step_name)) }, singleLine = true, enabled = !busy,
                     modifier = Modifier.fillMaxWidth().testTag("workflow-step-title-$index"))
-                OutlinedTextField(step.instruction, { value -> change(steps.map { if (it.id == step.id) it.copy(instruction = value) else it }) },
+                MikaTextField(step.instruction, { value -> change(steps.map { if (it.id == step.id) it.copy(instruction = value) else it }) },
                     label = { Text(stringResource(R.string.workflow_instruction)) }, minLines = 2, maxLines = 5, enabled = !busy,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("workflow-step-instruction-$index"))
                 Row {
@@ -247,7 +249,7 @@ internal fun WorkflowsScreen(runtime: WorkflowRuntime, onBack: () -> Unit, onOpe
     val scope = rememberCoroutineScope()
     MikaDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text(title) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            OutlinedTextField(value, { value = it; error = null }, label = { Text(label) }, minLines = 3, maxLines = 8,
+            MikaTextField(value, { value = it; error = null }, label = { Text(label) }, minLines = 3, maxLines = 8,
                 enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("workflow-dialog-input"))
             error?.let { FooterNote(workflowError(it), color = MikaTheme.colors.bad) }
         }
@@ -273,4 +275,5 @@ private fun phaseLabel(phase: WorkflowPhase) = when (phase) {
     WorkflowProblem.Read -> R.string.workflow_read_failed
     WorkflowProblem.Write -> R.string.recommendations_save_failed
     WorkflowProblem.ResultTooLong -> R.string.workflow_result_too_long
+    WorkflowProblem.Paused -> R.string.pause_blocked_workflow
 })

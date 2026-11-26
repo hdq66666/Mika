@@ -29,6 +29,7 @@ import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.run.RunOrigin
 import com.wangzan101.mika.core.run.Attendance
 import com.wangzan101.mika.settings.FeatureFlags
+import com.wangzan101.mika.settings.MikaPause
 import com.wangzan101.mika.takeover.Takeover
 import com.wangzan101.mika.ui.MainActivity
 import com.wangzan101.mika.settings.ui.StatusCopy
@@ -171,7 +172,7 @@ class TaskService : Service() {
         val run = if (intent?.hasExtra(EXTRA_RUN) == true) intent.getStringExtra(EXTRA_RUN)?.let(center::byKey) else taskState.shownRun
         when (intent?.action) {
             ACTION_START -> begin(intent.getStringExtra(EXTRA_GOAL).orEmpty(), intent.getStringExtra(EXTRA_CONVERSATION),
-                messageId = intent.getStringExtra(EXTRA_MESSAGE_ID))
+                messageId = intent.getStringExtra(EXTRA_MESSAGE_ID), brief = intent.getStringExtra(EXTRA_BRIEF))
             ACTION_ENQUEUE_FOLLOWUP -> {
                 val thread = intent.getStringExtra(EXTRA_CONVERSATION)
                 val text = intent.getStringExtra(EXTRA_GOAL).orEmpty()
@@ -235,6 +236,7 @@ class TaskService : Service() {
             ACTION_CANCEL_MCP -> intent.getStringExtra(EXTRA_MCP_ID)?.let { id -> center.runs().firstOrNull { it.mcpExternalId == id } }
                 ?.let { r -> if (center.cancelIfQueued(r)) cancelQueued(r) else r.cancel() }
             ACTION_CANCEL -> if (run != null && center.cancelIfQueued(run)) cancelQueued(run) else run?.cancel()
+            ACTION_PAUSE_ALL -> stopForPause()
             ACTION_RESUME -> run?.resume()
             ACTION_TAKE_OVER -> run?.takeOver(waitKeyOf(intent))
             ACTION_HAND_BACK -> run?.handBack(waitKeyOf(intent))
@@ -318,12 +320,15 @@ class TaskService : Service() {
         /** 并行时结果通知的下一个编号(循环使用)。 */
         internal fun nextResultId() = ID_RESULT_FIRST + resultCount.getAndIncrement() % RESULT_IDS
 
-        /** 结果与提示发成通知(服务里的与 App 启动时恢复用的共用);[resultId] 是结果通知的编号。 */
-        internal fun notifyDelivery(context: Context, delivery: Delivery, resultId: Int, scheduled: Boolean = false): SendOutcome {
+        /**
+         * 结果与提示发成通知(服务里的与 App 启动时恢复用的共用);[resultId] 是结果通知的编号。
+         * [ownResult] 为 false 时结果不发通知:前台正跟着这次运行,由它汇报(见 [ownResultNotice])。
+         */
+        internal fun notifyDelivery(context: Context, delivery: Delivery, resultId: Int, scheduled: Boolean = false, ownResult: Boolean = true): SendOutcome {
             val nm = context.getSystemService(NotificationManager::class.java)
             when (delivery) {
-                // Mika 在前台(用户正看着聊天页)时不弹任务完成通知,结果只在应用内展示;切到别的 App 才保留通知(#731)
-                is Delivery.Result -> if (!MainActivity.foreground) nm.notify(resultId, Notification.Builder(context, CHANNEL_RESULT)
+                // Mika 在前台(用户正看着聊天页)时不弹任务完成通知,结果只在应用内展示;切到别的 App 才保留通知(#731)。
+                is Delivery.Result -> if (!MainActivity.foreground && ownResult) nm.notify(resultId, Notification.Builder(context, CHANNEL_RESULT)
                     .setSmallIcon(R.drawable.ic_notification)
                     .setContentTitle(delivery.title)
                     .setContentText(delivery.text)
@@ -355,6 +360,7 @@ class TaskService : Service() {
         const val ACTION_START_CHANNEL = "com.wangzan101.mika.task.START_CHANNEL"
         const val ACTION_CANCEL_MCP = "com.wangzan101.mika.task.CANCEL_MCP"
         const val ACTION_CANCEL = "com.wangzan101.mika.task.CANCEL"
+        internal const val ACTION_PAUSE_ALL = "com.wangzan101.mika.task.PAUSE_ALL"
         const val ACTION_RESUME = "com.wangzan101.mika.task.RESUME"
         const val ACTION_TAKE_OVER = "com.wangzan101.mika.task.TAKE_OVER"
         const val ACTION_HAND_BACK = "com.wangzan101.mika.task.HAND_BACK"
@@ -373,6 +379,7 @@ class TaskService : Service() {
         internal const val FAILURE_STREAK_NOTICE = 3
         internal const val EXTRA_GOAL = "goal"
         internal const val EXTRA_MESSAGE_ID = "message_id"
+        internal const val EXTRA_BRIEF = "brief"
         internal const val EXTRA_SOURCE = "source"
         internal const val EXTRA_CONVERSATION = "conversation"
         internal const val EXTRA_TRIGGER_KEY = "trigger_key"
@@ -435,15 +442,22 @@ class TaskService : Service() {
                 .putExtra(EXTRA_WORKFLOW_ATTEMPT, attemptId))
         }
 
-        /** 开始任务;其他对话忙时排队。messageId 非空时按插话处理。 */
-        fun start(context: Context, goal: String, conversationId: String? = null, messageId: String? = null) {
+        /**
+         * 开始任务;其他对话忙时排队。messageId 非空时按插话处理。
+         * [goal] 是用户的原话;[brief] 是前台派活时附的补充说明,以 Mika 的说明进任务上下文,不当用户原话。
+         */
+        fun start(context: Context, goal: String, conversationId: String? = null, messageId: String? = null, brief: String? = null) {
             if (FeatureFlags.get(context).quitRequested()) return
             context.startForegroundService(
-                Intent(context, TaskService::class.java).setAction(ACTION_START).putExtra(EXTRA_GOAL, goal)
-                    .apply { if (conversationId != null) putExtra(EXTRA_CONVERSATION, conversationId) }
-                    .apply { if (messageId != null) putExtra(EXTRA_MESSAGE_ID, messageId) },
+                Intent(context, TaskService::class.java).setAction(ACTION_START)
+                    .apply { startExtras(goal, conversationId, messageId, brief).forEach { (k, v) -> putExtra(k, v) } },
             )
         }
+
+        /** [start] 发出的请求带的几项;没有的不带。 */
+        internal fun startExtras(goal: String, conversationId: String?, messageId: String?, brief: String?): List<Pair<String, String>> =
+            listOfNotNull(EXTRA_GOAL to goal, conversationId?.let { EXTRA_CONVERSATION to it },
+                messageId?.let { EXTRA_MESSAGE_ID to it }, brief?.let { EXTRA_BRIEF to it })
 
         /**
          * 用户明确选了「排队」:先在调用方把原话写进持久账本,再让服务认领。
@@ -452,7 +466,7 @@ class TaskService : Service() {
          */
         fun enqueueFollowUp(context: Context, conversationId: String, messageId: String, text: String,
             source: QueuedSource = QueuedSource.Explicit, startIfIdle: Boolean = true): Boolean {
-            if (text.isBlank() || FeatureFlags.get(context).quitRequested()) return false
+            if (text.isBlank() || FeatureFlags.get(context).quitRequested() || MikaPause.get(context).paused()) return false
             val app = context.applicationContext as? com.wangzan101.mika.MikaApp ?: return false
             val item = QueuedFollowUp(messageId, conversationId, text, System.currentTimeMillis(), source)
             if (!app.followUpQueue.add(item)) return false
@@ -468,7 +482,7 @@ class TaskService : Service() {
 
         /** 打开对话时:这个对话还有排队的下一件、又没有任务在跑,就让服务取一件开始。 */
         fun drainFollowUps(context: Context, conversationId: String) {
-            if (FeatureFlags.get(context).quitRequested()) return
+            if (FeatureFlags.get(context).quitRequested() || MikaPause.get(context).paused()) return
             val app = context.applicationContext as? com.wangzan101.mika.MikaApp ?: return
             if (!app.followUpQueue.contains(conversationId)) return
             runCatching {
@@ -512,6 +526,17 @@ class TaskService : Service() {
             if (state.runs.value.none { it.mcpExternalId == externalId }) return
             context.startService(Intent(context, TaskService::class.java).setAction(ACTION_CANCEL_MCP)
                 .putExtra(EXTRA_MCP_ID, externalId))
+        }
+
+        /**
+         * 用户刚暂停了 Mika(标记已经写好):持久排队清空;服务里还有任务(在跑或排着)就让它全部停下。
+         * 之后服务门口的 [pausedBlocks] 挡住一切新开始。
+         */
+        fun pauseAll(context: Context) {
+            val app = context.applicationContext as? com.wangzan101.mika.MikaApp ?: return
+            app.followUpQueue.clear()
+            if (app.taskState.runs.value.isEmpty()) return
+            runCatching { context.startService(Intent(context, TaskService::class.java).setAction(ACTION_PAUSE_ALL)) }
         }
 
         /** [runKey] 见 [send];应用内的按钮带着屏上那个对话的任务编号,不会落到别的任务上。 */
